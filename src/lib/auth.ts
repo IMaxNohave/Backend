@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { jwt } from "better-auth/plugins";
 import { dbClient } from "@db/client"; // your drizzle instance
 import { account, jwks, session, user, verification } from "@db/schema";
 
@@ -27,5 +28,12 @@ export const auth = betterAuth({
             clientId: process.env.ROBLOX_CLIENT_ID as string, 
             clientSecret: process.env.ROBLOX_CLIENT_SECRET as string, 
         }, 
-    }, 
+    },
+    plugins: [
+        jwt({
+            jwt: {
+                definePayload: ({ user }) => ({ id: user.id, email: user.email })
+            }
+        })
+    ]
 });
