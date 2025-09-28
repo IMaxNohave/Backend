@@ -6,7 +6,7 @@ import {
   text,
   decimal,
   int,
-  json
+  json,
 } from "drizzle-orm/mysql-core";
 
 export const user = mysqlTable("user", {
@@ -77,8 +77,9 @@ export const category = mysqlTable("category", {
 
 export const item = mysqlTable("item", {
   id: varchar("id", { length: 36 }).primaryKey(),
-  sellerId: varchar("seller_id", { length: 36 })
-    .references(() => user.id, { onDelete: "cascade" }),
+  sellerId: varchar("seller_id", { length: 36 }).references(() => user.id, {
+    onDelete: "cascade",
+  }),
   name: varchar("name", { length: 255 }).notNull(),
   detail: text("detail"),
   categoryId: varchar("category_id", { length: 36 })
@@ -105,7 +106,10 @@ export const orders = mysqlTable("orders", {
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
   quantity: int("quantity").notNull(),
-  priceAtPurchase: decimal("price_at_purchase", { precision: 12, scale: 2 }).notNull(),
+  priceAtPurchase: decimal("price_at_purchase", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
   status: text("status").notNull(),
   deadlineAt: timestamp("deadline_at", { fsp: 3 }).notNull(),
@@ -130,11 +134,14 @@ export const dispute = mysqlTable("dispute", {
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
   reasonCode: text("reason_code").notNull(),
-  bondAmount: decimal("bond_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  bondAmount: decimal("bond_amount", { precision: 12, scale: 2 })
+    .notNull()
+    .default("0"),
   status: text("status").notNull().default("OPEN"),
   autoVerdict: text("auto_verdict"),
-  resolvedBy: varchar("resolved_by", { length: 36 })
-    .references(() => user.id, { onDelete: "set null" }),
+  resolvedBy: varchar("resolved_by", { length: 36 }).references(() => user.id, {
+    onDelete: "set null",
+  }),
   resolvedAt: timestamp("resolved_at", { fsp: 3 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -159,8 +166,9 @@ export const orderMessage = mysqlTable("order_message", {
   orderId: varchar("order_id", { length: 36 })
     .notNull()
     .references(() => orders.id, { onDelete: "cascade" }),
-  senderId: varchar("sender_id", { length: 36 })
-    .references(() => user.id, { onDelete: "set null" }), // null = SYSTEM
+  senderId: varchar("sender_id", { length: 36 }).references(() => user.id, {
+    onDelete: "set null",
+  }), // null = SYSTEM
   kind: text("kind").notNull(),
   body: text("body"),
   isDeleted: boolean("is_deleted").notNull().default(false),
@@ -173,7 +181,9 @@ export const wallet = mysqlTable("wallet", {
   userId: varchar("user_id", { length: 36 })
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),
-  balance: decimal("balance", { precision: 14, scale: 2 }).notNull().default("0"),
+  balance: decimal("balance", { precision: 14, scale: 2 })
+    .notNull()
+    .default("0"),
   held: decimal("held", { precision: 14, scale: 2 }).notNull().default("0"),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
@@ -188,11 +198,12 @@ export const walletTx = mysqlTable("wallet_tx", {
   userId: varchar("user_id", { length: 36 })
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  orderId: varchar("order_id", { length: 36 })
-    .references(() => orders.id, { onDelete: "set null" }),
+  orderId: varchar("order_id", { length: 36 }).references(() => orders.id, {
+    onDelete: "set null",
+  }),
   action: varchar("action", { length: 32 })
     .notNull()
-    .references(() => actionType.actionName, { onDelete: "cascade" }), // map กับ action_type.action_name
+    .references(() => actionType.id, { onDelete: "cascade" }),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -225,8 +236,10 @@ export const withdrawRequest = mysqlTable("withdraw_request", {
   status: text("status").notNull().default("PENDING"),
   failureCode: varchar("failure_code", { length: 64 }),
   failureReason: text("failure_reason"),
-  processedBy: varchar("processed_by", { length: 36 })
-    .references(() => user.id, { onDelete: "set null" }),
+  processedBy: varchar("processed_by", { length: 36 }).references(
+    () => user.id,
+    { onDelete: "set null" }
+  ),
   processedAt: timestamp("processed_at", { fsp: 3 }).defaultNow(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
