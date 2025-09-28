@@ -1,49 +1,62 @@
 name: IMaxNohave # You can also change this to another name to avoid warning with existing group.
 services:
-  mysql:
-      image: mysql:8.4   # หรือ mysql:8.0 ถ้าต้องการ stable
-      container_name: IMaxNohave-db
-      restart: always
-      ports:
-        - "${MYSQL_PORT}:3306"
-      volumes:
-        - IMaxNohave-data:/var/lib/mysql
-        - ./_entrypoint:/docker-entrypoint-initdb.d
-      environment:
-        - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-        - MYSQL_DATABASE=${MYSQL_DB}
-        - MYSQL_USER=${MYSQL_APP_USER}
-        - MYSQL_PASSWORD=${MYSQL_APP_PASSWORD}
-      networks:
-        - IMaxNohave-net
+  database:
+    image: mysql:8.4 # หรือ mysql:8.0 ถ้าต้องการ stable
+    container_name: IMaxNohave-db
+    restart: always
+    ports:
+      - "${MYSQL_PORT}:3306"
+    volumes:
+      - IMaxNohave-data:/var/lib/mysql
+      - ./_entrypoint:/docker-entrypoint-initdb.d
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DB=${MYSQL_DB}
+      - MYSQL_APP_USER=${MYSQL_APP_USER}
+      - MYSQL_APP_PASSWORD=${MYSQL_APP_PASSWORD}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-p${MYSQL_ROOT_PASSWORD}",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - IMaxNohave-net
   backend:
-      depends_on:
-        - mysql
-      container_name: IMaxNohave-backend
-      restart: always
-      build: .
-      ports:
-        - ${PORT}:3000
-      networks:
-        - IMaxNohave-net
-      environment:
-        - MYSQL_DB=${MYSQL_DB}
-        - MYSQL_PORT=${MYSQL_PORT}
-        - MYSQL_HOST=${MYSQL_HOST}
-        - MYSQL_APP_USER=${MYSQL_APP_USER}
-        - MYSQL_APP_PASSWORD=${MYSQL_APP_PASSWORD}
-      volumes:
-        - .:/app
-        - /app/node_modules
-        - ./logs:/app/logs
-      post_start:
-        - command:
-            [
-              "sh",
-              "-c",
-              'bunx drizzle-kit push &&
-              bun run dev',
-            ]
+    depends_on:
+      database:
+        condition: service_healthy
+    container_name: IMaxNohave-backend
+    restart: always
+    build: .
+    ports:
+      - ${PORT}:3000
+    networks:
+      - IMaxNohave-net
+    environment:
+      - MYSQL_DB=${MYSQL_DB}
+      - MYSQL_PORT=${MYSQL_PORT}
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_APP_USER=${MYSQL_APP_USER}
+      - MYSQL_APP_PASSWORD=${MYSQL_APP_PASSWORD}
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    post_start:
+      - command:
+          [
+            "sh",
+            "-c",
+            'bunx drizzle-kit push | awk ''{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }'' | tee -a /app/logs/migration.log',
+          ]
 
 volumes:
   IMaxNohave-data: # Check by using `docker volume ls` command
