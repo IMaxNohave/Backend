@@ -32,7 +32,16 @@ export const auth = betterAuth({
     plugins: [
         jwt({
             jwt: {
-                definePayload: ({ user }) => ({ id: user.id, email: user.email })
+                definePayload: ({ user }) => { 
+                    return { 
+                        id: user.id, 
+                        email: user.email, 
+                        username: user.name 
+                    }
+                }
+            },
+            jwks: {
+                disablePrivateKeyEncryption: true
             }
         })
     ]
