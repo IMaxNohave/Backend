@@ -1,23 +1,15 @@
 import "dotenv/config";
 
-const dbUser = process.env.MYSQL_APP_USER;
-const dbPassword = process.env.MYSQL_APP_PASSWORD;
+const dbUser = process.env.MYSQL_USER;
+const dbPassword = process.env.MYSQL_PASSWORD;
 const dbHost = process.env.MYSQL_HOST;
 const dbPort = process.env.MYSQL_PORT;
-const dbName = process.env.MYSQL_DB;
+const dbName = process.env.MYSQL_DATABASE;
 
-// console.log({
-//   dbUser,
-//   dbPassword,
-//   dbHost,
-//   dbPort,
-//   dbName,
-// });
-
-if (!dbUser || !dbPassword || !dbHost || !dbName || !dbName) {
+if (!dbUser || !dbPassword || !dbHost || !dbPort || !dbName) {
   throw new Error("Invalid DB env.");
 }
 
 export const connectionString = `mysql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${dbName}`;
 
-console.log('show logs connectionString =',connectionString);
+console.log('show logs connectionString =', connectionString);
