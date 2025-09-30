@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia'
 import { eq } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 
 export const loginRoutes = new Elysia({ prefix: '/v1' })
@@ -15,7 +15,7 @@ export const loginRoutes = new Elysia({ prefix: '/v1' })
 
       const mockUserId = uuidv4()
       
-      await db.insert(schema.session).values({
+      await dbClient.insert(schema.session).values({
         id: sessionId,
         token: token,
         userId: mockUserId,
@@ -24,7 +24,7 @@ export const loginRoutes = new Elysia({ prefix: '/v1' })
         updatedAt: new Date()
       })
 
-      const wallet = await db
+      const wallet = await dbClient
         .select({ balance: schema.wallet.balance })
         .from(schema.wallet)
         .where(eq(schema.wallet.userId, mockUserId))

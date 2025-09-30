@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia'
 import { eq } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 import { authMiddleware, extractToken } from '../middleware/auth'
 
@@ -15,7 +15,7 @@ export const creditsRoutes = new Elysia({ prefix: '/v1/credits' })
       const depositId = uuidv4()
       const slipRef = `SLIP_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
 
-      await db.insert(schema.depositRequest).values({
+      await dbClient.insert(schema.depositRequest).values({
         id: depositId,
         userId: userId,
         amount: body.amount.toString(),
@@ -51,7 +51,7 @@ export const creditsRoutes = new Elysia({ prefix: '/v1/credits' })
       const token = extractToken(headers.authorization)
       const userId = await authMiddleware(token)
 
-      const wallet = await db
+      const wallet = await dbClient
         .select()
         .from(schema.wallet)
         .where(eq(schema.wallet.userId, userId))
@@ -70,7 +70,7 @@ export const creditsRoutes = new Elysia({ prefix: '/v1/credits' })
 
       const withdrawId = uuidv4()
 
-      await db.insert(schema.withdrawRequest).values({
+      await dbClient.insert(schema.withdrawRequest).values({
         id: withdrawId,
         userId: userId,
         amount: body.amount.toString(),

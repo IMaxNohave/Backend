@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia'
 import { eq } from 'drizzle-orm'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 import { authMiddleware, extractToken } from '../middleware/auth'
 
@@ -11,7 +11,7 @@ export const balanceRoutes = new Elysia()
       const token = extractToken(headers.authorization)
       const userId = await authMiddleware(token)
 
-      const wallet = await db
+      const wallet = await dbClient
         .select({ balance: schema.wallet.balance })
         .from(schema.wallet)
         .where(eq(schema.wallet.userId, userId))
