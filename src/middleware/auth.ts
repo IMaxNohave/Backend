@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 
 // Auth middleware
@@ -8,7 +8,7 @@ export const authMiddleware = async (token: string) => {
     throw new Error('Token required')
   }
 
-  const session = await db
+  const session = await dbClient
     .select({
       userId: schema.session.userId,
       expiresAt: schema.session.expiresAt,

@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 import { authMiddleware, extractToken } from '../middleware/auth'
 
@@ -13,7 +13,7 @@ export const salesRoutes = new Elysia({ prefix: '/v1/sales' })
 
       const itemId = uuidv4()
       
-      await db.insert(schema.item).values({
+      await dbClient.insert(schema.item).values({
         id: itemId,
         sellerId: userId,
         name: body.name,

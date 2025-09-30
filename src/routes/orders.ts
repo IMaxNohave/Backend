@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia'
 import { eq, and, or, desc, asc } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 import { authMiddleware, extractToken } from '../middleware/auth'
 
@@ -12,7 +12,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
       const token = extractToken(headers.authorization)
       const userId = await authMiddleware(token)
 
-      const order = await db
+      const order = await dbClient
         .select()
         .from(schema.orders)
         .where(and(
@@ -29,7 +29,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
         return { success: false, error: 'Order not found or unauthorized', data: null }
       }
 
-      const messages = await db
+      const messages = await dbClient
         .select({
           id: schema.orderMessage.id,
           senderId: schema.orderMessage.senderId,
@@ -68,7 +68,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
       const token = extractToken(headers.authorization)
       const userId = await authMiddleware(token)
 
-      const order = await db
+      const order = await dbClient
         .select()
         .from(schema.orders)
         .where(and(
@@ -87,7 +87,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
 
       const messageId = uuidv4()
 
-      await db.insert(schema.orderMessage).values({
+      await dbClient.insert(schema.orderMessage).values({
         id: messageId,
         orderId: params.order_id,
         senderId: userId,
@@ -127,7 +127,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
       
       let orders
       if (historyType === 'Purchase') {
-        orders = await db
+        orders = await dbClient
           .select({
             id: schema.orders.id,
             name: schema.item.name,
@@ -141,7 +141,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
           .where(eq(schema.orders.buyerId, userId))
           .orderBy(desc(schema.orders.createdAt))
       } else {
-        orders = await db
+        orders = await dbClient
           .select({
             id: schema.orders.id,
             name: schema.item.name,
@@ -157,7 +157,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
       }
 
       if (historyType === 'Sale') {
-        const currentUser = await db
+        const currentUser = await dbClient
           .select({ name: schema.user.name })
           .from(schema.user)
           .where(eq(schema.user.id, userId))
@@ -169,7 +169,7 @@ export const ordersRoutes = new Elysia({ prefix: '/v1/orders' })
           sellerName: currentUserName
         }))
       } else {
-        const currentUser = await db
+        const currentUser = await dbClient
           .select({ name: schema.user.name })
           .from(schema.user)
           .where(eq(schema.user.id, userId))

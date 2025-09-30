@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia'
 import { eq } from 'drizzle-orm'
-import { db } from '../db'
+import { dbClient } from '@db/client'
 import * as schema from '../db/schema'
 import { authMiddleware, extractToken } from '../middleware/auth'
 
@@ -15,7 +15,7 @@ export const profileRoutes = new Elysia({ prefix: '/v1/profile' })
       if (body.name) updateData.name = body.name
       if (body.image !== undefined) updateData.image = body.image
 
-      await db
+      await dbClient
         .update(schema.user)
         .set(updateData)
         .where(eq(schema.user.id, userId))
@@ -44,7 +44,7 @@ export const profileRoutes = new Elysia({ prefix: '/v1/profile' })
       const token = extractToken(headers.authorization)
       const userId = await authMiddleware(token)
 
-      const user = await db
+      const user = await dbClient
         .select({
           id: schema.user.id,
           name: schema.user.name,
