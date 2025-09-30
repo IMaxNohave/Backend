@@ -7,6 +7,9 @@ To get started with this template, simply paste this command into your terminal:
 ```bash
 bun create elysia ./elysia-example
 bun install
+bun add @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
+bun add uuid
+bun add -d @types/uuid
 ```
 
 ## Database Initialization

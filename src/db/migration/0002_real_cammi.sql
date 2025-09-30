@@ -1,0 +1,1 @@
+ALTER TABLE `item` MODIFY COLUMN `category_id` varchar(36);

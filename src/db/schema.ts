@@ -82,9 +82,10 @@ export const item = mysqlTable("item", {
   }),
   name: varchar("name", { length: 255 }).notNull(),
   detail: text("detail"),
-  categoryId: varchar("category_id", { length: 36 })
-    .notNull()
-    .references(() => category.id, { onDelete: "cascade" }),
+  categoryId: varchar("category_id", { length: 36 }).references(
+    () => category.id,
+    { onDelete: "cascade" }
+  ),
   image: text("image"),
   price: decimal("price", { precision: 12, scale: 2 }).notNull(),
   quantity: int("quantity").notNull(),

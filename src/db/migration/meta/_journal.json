@@ -15,6 +15,13 @@
       "when": 1759047618695,
       "tag": "0001_remarkable_jocasta",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1759182778353,
+      "tag": "0002_real_cammi",
+      "breakpoints": true
     }
   ]
 }
