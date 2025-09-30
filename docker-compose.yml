@@ -37,7 +37,7 @@ services:
     restart: always
     build: .
     ports:
-      - ${PORT}:3000
+      - ${PORT}:6969
     networks:
       - IMaxNohave-net
     environment:

@@ -1,52 +1,99 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { swagger } from "@elysiajs/swagger";
+import openapi from "@elysiajs/openapi";
 import { drizzle } from "drizzle-orm/mysql2";
-import { eq, and, like, or, desc, asc } from "drizzle-orm";
+import { eq, and, like, or, desc, asc, ConsoleLogWriter } from "drizzle-orm";
 import mysql from "mysql2/promise";
-import { v4 as uuidv4 } from "uuid";
 import * as schema from "db/schema";
+import { auth } from "lib/auth";
 
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { randomUUID } from "crypto";
+
+import { UserController } from "user/user.controller";
+import { jwtVerify, importJWK, decodeJwt } from "jose";
+
+import { checkDbConnection } from "./db";
 // Database connection
 const connection = mysql.createPool({
-  host: process.env.DB_HOST || "localhost",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "marketplace",
+  host: process.env.MYSQL_HOST || "localhost",
+  user: process.env.MYSQL_APP_USER || "root",
+  password: process.env.MYSQL_APP_PASSWORD || "",
+  database: process.env.MYSQL_DB || "marketplace",
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
 
+checkDbConnection(connection);
+
 const db = drizzle(connection, { schema, mode: "default" });
 
-// Auth middleware
-const authMiddleware = async (token: string) => {
-  if (!token) {
-    throw new Error("Token required");
+// R2 storage
+const R2 = new S3Client({
+  region: process.env.R2_REGION || "auto", // R2 ใช้ 'auto'
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
+const R2_BUCKET = process.env.R2_BUCKET!;
+
+// อ่าน public key ล่าสุดจากตาราง jwks (เก็บเป็น JSON string ของ JWK)
+// async function getVerifyKey() {
+//   const row = await db
+//     .select({ publicKey: schema.jwks.publicKey })
+//     .from(schema.jwks)
+//     .orderBy(desc(schema.jwks.createdAt))
+//     .limit(1);
+
+//   if (!row.length) throw new Error("No JWKS public key");
+//   const jwk = JSON.parse(row[0].publicKey); // {"kty":"OKP","crv":"Ed25519","x":"...","kid":"..."}
+//   return importJWK(jwk, "EdDSA");
+// }
+
+const ISSUER = process.env.JWT_ISSUER; // ให้ตรงกับฝั่งออก JWT
+const AUDIENCE = process.env.JWT_AUDIENCE;
+
+const extractBearer = (authHeader?: string) => {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw new Error("Authorization header with Bearer token required");
   }
-
-  const session = await db
-    .select({
-      userId: schema.session.userId,
-      expiresAt: schema.session.expiresAt,
-    })
-    .from(schema.session)
-    .where(eq(schema.session.token, token))
-    .limit(1);
-
-  if (!session.length) {
-    throw new Error("Invalid token");
-  }
-
-  const sessionData = session[0];
-
-  if (new Date() > sessionData.expiresAt) {
-    throw new Error("Token expired");
-  }
-
-  return sessionData.userId;
+  return authHeader.slice(7);
 };
+
+/**
+ * Hybrid verify:
+ * 1) Verify JWT (EdDSA) ด้วย JWKS → ดึง userId จาก sub
+ * 2) อ่าน session จาก better-auth ด้วย cookie
+ * 3) ต้องตรงกัน และ session ยัง valid
+ * คืน userId
+ */
+// export const authMiddleware = async (headers: Record<string, any>) => {
+//   // 1) JWT ใน Authorization: Bearer <jwt>
+//   const jwt = extractBearer(headers.authorization);
+//   const key = await getVerifyKey();
+
+//   const { payload } = await jwtVerify(jwt, key, {
+//     algorithms: ["EdDSA"],
+//     ...(ISSUER ? { issuer: ISSUER } : {}),
+//     ...(AUDIENCE ? { audience: AUDIENCE } : {}),
+//   });
+
+//   const jwtUserId = (payload.sub as string) || (payload.userId as string);
+//   if (!jwtUserId) throw new Error("Invalid token payload");
+
+//   // 2) session จาก better-auth (cookie)
+//   const sess = await auth.api.getSession({ headers, asResponse: false } as any);
+//   if (!sess?.user?.id) throw new Error("Not signed in");
+
+//   // 3) ต้องเป็นคนเดียวกัน
+//   if (sess.user.id !== jwtUserId) throw new Error("Token/user mismatch");
+
+//   return jwtUserId;
+// };
 
 // Extract Bearer token helper
 const extractToken = (authHeader: string | undefined) => {
@@ -56,20 +103,24 @@ const extractToken = (authHeader: string | undefined) => {
   return authHeader.substring(7);
 };
 
+export const getUserIdFromJWT = (headers: Record<string, any>) => {
+  const token = extractBearer(headers.authorization);
+  const payload = decodeJwt(token); // ไม่ตรวจลายเซ็น
+  const userId =
+    (payload.sub as string) ||
+    (payload.userId as string) ||
+    (payload.uid as string);
+
+  if (!userId) throw new Error("Invalid token payload: missing user id");
+  return userId;
+};
+
 const app = new Elysia();
 
-app.use(cors() as any);
-app.use(
-  swagger({
-    documentation: {
-      info: {
-        title: "Marketplace API",
-        version: "1.0.0",
-        description: "Complete E-commerce marketplace API",
-      },
-    },
-  }) as any
-);
+app.use(openapi());
+app.mount(auth.handler);
+app.use(UserController);
+app.get("/", () => "Hello Elysia");
 
 // Global error handler
 app.onError(({ code, error, set }) => {
@@ -103,6 +154,47 @@ app.onError(({ code, error, set }) => {
   }
 });
 
+// ========== R2 ENDPOINTS ==========
+app.post(
+  "/v1/r2/upload-url",
+  async ({ body, headers, set }) => {
+    try {
+      const token = extractToken(headers.authorization);
+      // await authMiddleware(headers);
+
+      const b: any = body ?? {};
+      const contentType = b.contentType || "image/jpeg";
+      const fileName = b.fileName || `${randomUUID()}.jpg`;
+      const key = `images/${fileName}`;
+
+      const cmd = new PutObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: key,
+        ContentType: contentType,
+      });
+
+      const url = await getSignedUrl(R2, cmd, { expiresIn: 60 }); // 60 วิ
+      // ถ้า bucket เปิด public และตั้งโดเมนไว้ ให้คืน URL สำหรับใช้งานทันที
+      const imageUrl = process.env.R2_PUBLIC_BASE
+        ? `${process.env.R2_PUBLIC_BASE}/${key}`
+        : null;
+
+      return { success: true, data: { uploadUrl: url, key, imageUrl } };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      set.status = msg.includes("Token") ? 401 : 500;
+      return { success: false, error: msg, data: null };
+    }
+  },
+  {
+    headers: t.Object({ authorization: t.String() }),
+    body: t.Object({
+      contentType: t.Optional(t.String()),
+      fileName: t.Optional(t.String()),
+    }),
+  }
+);
+
 // ========== ITEM ENDPOINTS ==========
 
 // 1. Query list item (Home)
@@ -110,8 +202,7 @@ app.get(
   "/v1/home",
   async ({ query, headers, set }) => {
     try {
-      const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const limit = Math.min(parseInt(query.limit || "10"), 100);
       const filters = query.filter || {};
@@ -194,15 +285,138 @@ app.get(
   }
 );
 
+// 1.5 Query item detail (Item Detail)
+// GET /v1/items/:id
+app.get(
+  "/v1/items/:id",
+  async ({ params, headers, set }) => {
+    try {
+      // ถ้ามี auth ก็ใช้: const userId = await authMiddleware(headers)
+      const [row] = await db
+        .select({
+          id: schema.item.id,
+          name: schema.item.name,
+          detail: schema.item.detail,
+          image: schema.item.image,
+          price: schema.item.price,
+          status: schema.item.status,
+          category: schema.category.name,
+          sellerName: schema.user.name,
+          sellerEmail: schema.user.email,
+          sellerId: schema.user.id,
+        })
+        .from(schema.item)
+        .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
+        .leftJoin(
+          schema.category,
+          eq(schema.item.categoryId, schema.category.id)
+        )
+        .where(eq(schema.item.id, params.id))
+        .limit(1);
+
+      if (!row) {
+        set.status = 404;
+        return { success: false, error: "Item not found", data: null };
+      }
+
+      return {
+        success: true,
+        data: {
+          id: row.id,
+          name: row.name,
+          description: row.detail,
+          image: row.image,
+          price: Number(row.price || 0),
+          status: row.status,
+          category: row.category,
+          seller: row.sellerName,
+          sellerEmail: row.sellerEmail,
+          sellerId: row.sellerId,
+          // ใส่ field เสริมถ้าต้องการ เช่น rarity/condition
+        },
+      };
+    } catch (e: any) {
+      set.status = 500;
+      return {
+        success: false,
+        error: e?.message || "Internal error",
+        data: null,
+      };
+    }
+  },
+  { params: t.Object({ id: t.String() }) }
+);
+
+// GET /v1/categories
+app.get("/v1/categories", async ({ headers, set }) => {
+  try {
+    // ถ้าต้องการบังคับล็อกอินค่อยเปิดใช้:
+    // await authMiddleware(headers)
+
+    const rows = await db
+      .select({
+        id: schema.category.id,
+        name: schema.category.name,
+        detail: schema.category.detail,
+      })
+      .from(schema.category)
+      .where(eq(schema.category.isActive, true))
+      .orderBy(asc(schema.category.name));
+
+    return { success: true, data: rows };
+  } catch (e: any) {
+    set.status = 500;
+    return {
+      success: false,
+      error: e?.message || "Internal error",
+      data: null,
+    };
+  }
+});
+
 // 2. Add item (Seller)
 app.post(
   "/v1/sales",
   async ({ body, headers, set }) => {
     try {
-      const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      // const token = extractToken(headers.authorization);
+      // const userId = await authMiddleware(headers);
 
-      const itemId = uuidv4();
+      const userId = getUserIdFromJWT(headers);
+
+      const itemId = randomUUID();
+
+      // (1) เช็ค user มีจริง
+      // const u = await db
+      //   .select({ id: schema.user.id })
+      //   .from(schema.user)
+      //   .where(eq(schema.user.id, userId))
+      //   .limit(1);
+      // if (!u.length) {
+      //   set.status = 400;
+      //   return { success: false, error: "User not found", data: null };
+      // }
+
+      // // (2) หา categoryId จาก body.category
+      // let categoryId = body.category; // อาจเป็น id หรือชื่อ
+      // if (categoryId.length !== 36) {
+      //   const cat = await db
+      //     .select({ id: schema.category.id })
+      //     .from(schema.category)
+      //     .where(
+      //       and(
+      //         eq(schema.category.name, body.category),
+      //         eq(schema.category.isActive, true)
+      //       )
+      //     )
+      //     .limit(1);
+
+      //   if (!cat.length) {
+      //     set.status = 400;
+      //     return { success: false, error: "Category not found", data: null };
+      //   }
+      //   categoryId = cat[0].id;
+      // }
 
       await db.insert(schema.item).values({
         id: itemId,
@@ -215,19 +429,22 @@ app.post(
         quantity: 1,
         isActive: true,
         status: 1,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       });
 
       return {
         success: true,
         data: { id: itemId, message: "Item created successfully" },
       };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      set.status = errorMessage.includes("Token") ? 401 : 500;
-      return { success: false, error: errorMessage, data: null };
+    } catch (e: any) {
+      console.error("Insert item error:", {
+        code: e?.code,
+        errno: e?.errno,
+        sqlState: e?.sqlState,
+        sqlMessage: e?.sqlMessage,
+        sql: e?.sql,
+      });
+      set.status = 500;
+      return { success: false, error: e?.sqlMessage || e?.message, data: null };
     }
   },
   {
@@ -314,7 +531,7 @@ app.patch(
   async ({ body, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const item = await db
         .select()
@@ -343,7 +560,7 @@ app.patch(
         };
       }
 
-      const orderId = uuidv4();
+      const orderId = randomUUID();
       const quantity = 1;
       const total = parseFloat(itemData.price) * quantity;
 
@@ -396,9 +613,9 @@ app.post(
   async ({ body, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
-      const depositId = uuidv4();
+      const depositId = randomUUID();
       const slipRef = `SLIP_${Date.now()}_${Math.random()
         .toString(36)
         .substring(2, 8)}`;
@@ -442,7 +659,7 @@ app.post(
   async ({ body, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const wallet = await db
         .select()
@@ -462,7 +679,7 @@ app.post(
         return { success: false, error: "Insufficient balance", data: null };
       }
 
-      const withdrawId = uuidv4();
+      const withdrawId = randomUUID();
 
       await db.insert(schema.withdrawRequest).values({
         id: withdrawId,
@@ -503,7 +720,7 @@ app.get(
   async ({ headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const wallet = await db
         .select({ balance: schema.wallet.balance })
@@ -537,7 +754,7 @@ app.patch(
   async ({ body, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const updateData: any = { updatedAt: new Date() };
       if (body.name) updateData.name = body.name;
@@ -575,7 +792,7 @@ app.get(
   async ({ headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const user = await db
         .select({
@@ -615,12 +832,12 @@ app.post(
   "/v1/login",
   async ({ body, set }) => {
     try {
-      const sessionId = uuidv4();
+      const sessionId = randomUUID();
       const token = `token_${Date.now()}_${Math.random().toString(36)}`;
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 30);
 
-      const mockUserId = uuidv4();
+      const mockUserId = randomUUID();
 
       await db.insert(schema.session).values({
         id: sessionId,
@@ -672,7 +889,7 @@ app.get(
   async ({ params, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const order = await db
         .select()
@@ -741,7 +958,7 @@ app.post(
   async ({ params, body, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const order = await db
         .select()
@@ -766,7 +983,7 @@ app.post(
         };
       }
 
-      const messageId = uuidv4();
+      const messageId = randomUUID();
 
       await db.insert(schema.orderMessage).values({
         id: messageId,
@@ -809,7 +1026,7 @@ app.get(
   async ({ query, headers, set }) => {
     try {
       const token = extractToken(headers.authorization);
-      const userId = await authMiddleware(token);
+      const userId = getUserIdFromJWT(headers);
 
       const historyType = query.type || "Purchase";
 
@@ -889,9 +1106,10 @@ app.get(
   }
 );
 
-console.log("🦊 Complete Marketplace API is running at http://localhost:3000");
-console.log("📚 API Documentation available at http://localhost:3000/swagger");
+console.log(
+  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
+);
 
-app.listen(3000);
+app.listen(6969);
 
 export default app;
