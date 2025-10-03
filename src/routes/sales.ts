@@ -1,15 +1,18 @@
 import { Elysia, t } from 'elysia'
 import { v4 as uuidv4 } from 'uuid'
 import { dbClient } from '@db/client'
+import { betterAuth } from "lib/auth-macro";
 import * as schema from '../db/schema'
-import { authMiddleware, extractToken } from '../middleware/auth'
+//import { authMiddleware, extractToken } from '../middleware/auth'
 
 export const salesRoutes = new Elysia({ prefix: '/v1/sales' })
+.use(betterAuth)
   // 2. Add item (Seller)
-  .post('/', async ({ body, headers, set }) => {
+  .post('/', async ({ body, headers, set, payload }) => {
     try {
-      const token = extractToken(headers.authorization)
-      const userId = await authMiddleware(token)
+      //const token = extractToken(headers.authorization)
+      //const userId = await authMiddleware(token)
+      const userId = payload.id;
 
       const itemId = uuidv4()
       
@@ -38,13 +41,14 @@ export const salesRoutes = new Elysia({ prefix: '/v1/sales' })
       return { success: false, error: errorMessage, data: null }
     }
   }, {
-    headers: t.Object({ authorization: t.String() }),
+    //headers: t.Object({ authorization: t.String() }),
     body: t.Object({
       image: t.Optional(t.String()),
       name: t.String({ minLength: 1, maxLength: 255 }),
       description: t.Optional(t.String()),
       price: t.Number({ minimum: 0 }),
-      category: t.String({ minLength: 36, maxLength: 36 }),
+      category: t.String({ minLength: 1, maxLength: 36 }),
       tag: t.Optional(t.String())
-    })
+    }),
+    auth: true
   })
