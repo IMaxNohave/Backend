@@ -21,10 +21,10 @@ export const uploadR2 = new Elysia({
 })
 // ========== R2 ENDPOINTS ==========
 .post(
-  "/v1/r2/upload-url",
+  "r2/upload-url",
   async ({ body, headers, set }) => {
     try {
-      const token = extractToken(headers.authorization);
+      //const token = extractToken(headers.authorization);
       // await authMiddleware(headers);
 
       const b: any = body ?? {};
@@ -41,7 +41,7 @@ export const uploadR2 = new Elysia({
       const url = await getSignedUrl(R2, cmd, { expiresIn: 60 }); // 60 วิ
       // ถ้า bucket เปิด public และตั้งโดเมนไว้ ให้คืน URL สำหรับใช้งานทันที
       const imageUrl = process.env.R2_PUBLIC_BASE
-        ? `${process.env.R2_PUBLIC_BASE}/${key}`
+        ? `${process.env.R2_PUBLIC_BASE}${key}`
         : null;
 
       return { success: true, data: { uploadUrl: url, key, imageUrl } };
@@ -52,7 +52,7 @@ export const uploadR2 = new Elysia({
     }
   },
   {
-    headers: t.Object({ authorization: t.String() }),
+    //headers: t.Object({ authorization: t.String() }),
     body: t.Object({
       contentType: t.Optional(t.String()),
       fileName: t.Optional(t.String()),
