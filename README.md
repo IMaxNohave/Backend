@@ -36,8 +36,6 @@ bun run dev
 
 ```bash
 docker compose up -d --build
-docker compose --env-file ./.env.test up -d --force-recreate --build
+docker compose --env-file ./.env.docker up -d --force-recreate --build
 docker compose down -v
 ```
-
-Open http://localhost:3000/ with your browser to see the result.
