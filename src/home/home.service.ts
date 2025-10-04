@@ -207,4 +207,41 @@ export abstract class homeService {
     // ถ้าต้องการ map/แปลงรูปแบบเพิ่มเติม ทำตรงนี้ได้
     return rows;
   }
+
+  // เพิ่ม method นี้ใน class homeService (ไฟล์เดียวกับ listItems)
+  static async listItemsBySeller({
+    sellerId,
+    limit,
+  }: {
+    sellerId: string;
+    limit: number;
+  }) {
+    const priceNumber = sql<number>`CAST(${schema.item.price} AS DECIMAL(12,2))`;
+
+    const rows = await dbClient
+      .select({
+        id: schema.item.id,
+        name: schema.item.name,
+        detail: schema.item.detail,
+        image: schema.item.image,
+        price: priceNumber,
+        status: schema.item.status,
+        seller_name: schema.user.name,
+        category_id: schema.item.categoryId,
+        category_name: schema.category.name,
+        category_detail: schema.category.detail,
+      })
+      .from(schema.item)
+      .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
+      .leftJoin(schema.category, eq(schema.item.categoryId, schema.category.id))
+      .where(
+        and(
+          eq(schema.item.sellerId, sellerId),
+          eq(schema.item.isActive, true) // เอาเฉพาะที่ active; เอาออกได้หากต้องการเห็นทั้งหมด
+        )
+      )
+      .limit(limit);
+
+    return rows.map(mapItemRow); // ใช้ mapItemRow เดิมของไฟล์คุณ
+  }
 }

@@ -127,3 +127,20 @@ export const HomeController = new Elysia({
         auth: false // ✅ ปิดตรวจ JWT ด้วย macro ไปก่อน อาจจะยังไม่รู้ ตรงนี้ก็เหมือนกัน ยังไม่รุ้ ฝากด้วยน้องบอล
     }
 )
+.get(
+  "/my-items",
+  async ({ payload, query }) => {
+    const limit = Math.min(parseInt(String(query.limit ?? "20"), 10), 100);
+    const data = await homeService.listItemsBySeller({
+      sellerId: payload.id,   // เอา user id จาก JWT
+      limit,
+    });
+    return { success: true, data };
+  },
+  {
+    auth: true,
+    query: t.Object({
+      limit: t.Optional(t.Union([t.String(), t.Number()])),
+    }),
+  }
+)
