@@ -73,20 +73,58 @@ export const UserController = new Elysia({
     message: "Sign out successful"
   }
 })
-.patch("/user", async ({ body, payload }) => { // example endpoint and using "payload" from better-auth macro
-
-    await userService.getUserById({
-        id: payload.id,
-        email: payload.email
+.get("/user/me", async ({ payload, set }) => {
+    const row = await userService.getProfileById({
+      id:payload.id
     })
+    const me = row?.[0];
+    if(!row) {
+      set.status = 404;
+      return {
+        success: false,
+        error: "User not found", 
+        data: null
+      }
+    }
 
     return {
-        success: true,
-        message: "User update Successful"
+      success: true,
+      data: me
     }
 }, {
-    body: t.Object({
-        phone_number: t.String()
-    }),
-    auth: true // this line enables better-auth macro
+  auth: true
+})
+.patch("/user/update", async ({ payload, body, set }) => {
+  try {
+    const updated = await userService.updateProfileById({
+      id: payload.id,
+      name: body.name,
+      email: body.email,
+    });
+    if (!updated) {
+      set.status = 404;
+      return { 
+        success: false, 
+        error: "User not found", data: null 
+      };
+    }
+    return { 
+      success: true, 
+      data: updated 
+    };
+  } catch (e: any) {
+    const msg = e?.message || "Update failed";
+    if (e?.code === "EMAIL_TAKEN") {
+      set.status = 409;
+    } else {
+      set.status = 500;
+    }
+    return { success: false, error: msg, data: null };
+  }
+}, {
+  auth: true,
+  body: t.Object({
+    name: t.String({ minLength: 1 }),   // ใส่เฉพาะฟิลด์ที่อยากเปลี่ยน
+    email: t.String({ minLength: 3 }),  // (ปล่อย validation ลึก ๆ ที่ frontend เพิ่ม)
+  })
 })
