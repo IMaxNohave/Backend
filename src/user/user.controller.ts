@@ -127,4 +127,34 @@ export const UserController = new Elysia({
     name: t.String({ minLength: 1 }),   // ใส่เฉพาะฟิลด์ที่อยากเปลี่ยน
     email: t.String({ minLength: 3 }),  // (ปล่อย validation ลึก ๆ ที่ frontend เพิ่ม)
   })
-})
+  }
+)
+.get("/user/wallet", async ({ payload, set }) => {
+  // สร้างให้เลยถ้ายังไม่มี
+  const w = await userService.getOrCreateWallet({ userId: payload.id });
+
+  if (!w) {
+    set.status = 404;
+    return { success: false, error: "Wallet not found", data: null };
+  }
+
+  // decimal -> string (ไม่ทำให้เสียทศนิยม)
+  const balanceStr = (w.balance as unknown as string) ?? "0";
+  const heldStr = (w.held as unknown as string) ?? "0";
+
+  // available = balance - held (คำนวณเพื่อโชว์)
+  // ถ้าต้องการความแม่นยำสูง แนะนำใช้ไลบรารี decimal.js/bignumber.js
+  const available = (Number(balanceStr) - Number(heldStr)).toFixed(2);
+
+  return {
+    success: true,
+    data: {
+      balance: balanceStr,  // string
+      held: heldStr,        // string
+      available,            // string (คำนวณจาก Number)
+      updatedAt: w.updatedAt,
+    },
+  };
+},
+{ auth: true }
+)
