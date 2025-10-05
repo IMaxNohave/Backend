@@ -13,6 +13,8 @@ import { balanceRoutes } from './routes/balance'
 import { UserController } from 'user/user.controller';
 import { uploadR2 } from 'routes/upload-r2';
 import { HomeController } from 'home/home.controller';
+import { ItemsController } from 'item/items.controller';
+import { OrdersController } from 'order/orders.controller';
 
 const app = new Elysia()
 .mount(auth.handler) 
@@ -31,12 +33,14 @@ const app = new Elysia()
 .use(UserController)
 .use(HomeController)
 .use(uploadR2)
+.use(ItemsController)
+.use(OrdersController)
 // i jao nay tum yang mai dai edit
 .use(salesRoutes)
 .use(creditsRoutes)
 .use(profileRoutes)
 .use(loginRoutes)
-.use(ordersRoutes)
+//.use(ordersRoutes)
 .use(balanceRoutes)
 
 .get("/", () => "Hello Elysia")

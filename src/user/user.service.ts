@@ -1,5 +1,5 @@
 import { dbClient } from "@db/client";
-import { user } from "@db/schema";
+import { user, wallet } from "@db/schema";
 import { eq } from "drizzle-orm";
 
 export abstract class userService { // example service nothing actually happening here
@@ -44,5 +44,27 @@ export abstract class userService { // example service nothing actually happenin
             .update(user)
             .set(patch)
             .where(eq(user.id, id));
+    }
+    static async getWalletByUserId({ userId }: { userId: string }) {
+        const rows = await dbClient
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, userId))
+        .limit(1);
+        return rows[0] ?? null;
+    }
+    static async getOrCreateWallet({ userId }: { userId: string }) {
+        const existing = await this.getWalletByUserId({ userId });
+        if (existing) return existing;
+
+        // สร้างกระเป๋าเริ่มต้น 0
+        await dbClient.insert(wallet).values({
+        userId,
+        balance: "0",
+        held: "0",
+        });
+
+        // ดึงกลับมาอีกครั้ง (หรือจะ return ค่า inline ก็ได้)
+        return await this.getWalletByUserId({ userId });
     }
 }
