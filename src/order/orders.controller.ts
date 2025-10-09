@@ -7,45 +7,74 @@ export const OrdersController = new Elysia({
   name: "orders.controller",
   prefix: "/v1/orders",
 })
-.use(betterAuth) // using better-auth macro
-// รายการออเดอร์ของ "ผู้ซื้อ" ที่ล็อกอินอยู่
-.get(
-  "/my",
-  async ({ payload, query }) => {
-    const limit = Math.min(parseInt(String(query.limit ?? "20"), 10), 100);
-    const data = await ordersService.listOrdersForBuyer({ buyerId: payload.id, limit });
-    return { success: true, data };
-  },
-  {
-    auth: true,
-    query: t.Object({ limit: t.Optional(t.Union([t.String(), t.Number()])) }),
-  }
-)
-
-// (ออปชัน) รายการออเดอร์ที่เราขายได้ (ฝั่งผู้ขาย)
-.get(
-  "/sold",
-  async ({ payload, query }) => {
-    const limit = Math.min(parseInt(String(query.limit ?? "20"), 10), 100);
-    const data = await ordersService.listOrdersForSeller({ sellerId: payload.id, limit });
-    return { success: true, data };
-  },
-  {
-    auth: true,
-    query: t.Object({ limit: t.Optional(t.Union([t.String(), t.Number()])) }),
-  }
-)
-
-// รายละเอียดออเดอร์ (ทั้งผู้ซื้อ/ผู้ขายที่เกี่ยวข้องต้องเห็นได้)
-.get(
-  "/:id",
-  async ({ params, payload, set }) => {
-    const data = await ordersService.getOrderDetail({ orderId: params.id, userId: payload.id });
-    if (!data) {
-      set.status = 404;
-      return { success: false, error: "Order not found", data: null };
+  .use(betterAuth) // using better-auth macro
+  // รายการออเดอร์ของ "ผู้ซื้อ" ที่ล็อกอินอยู่
+  .get(
+    "/my",
+    async ({ payload, query }) => {
+      const limit = Math.min(parseInt(String(query.limit ?? "20"), 10), 100);
+      const data = await ordersService.listOrdersForBuyer({
+        buyerId: payload.id,
+        limit,
+      });
+      return { success: true, data };
+    },
+    {
+      auth: true,
+      query: t.Object({ limit: t.Optional(t.Union([t.String(), t.Number()])) }),
     }
-    return { success: true, data };
-  },
-  { auth: true, params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }) }
-);
+  )
+
+  // (ออปชัน) รายการออเดอร์ที่เราขายได้ (ฝั่งผู้ขาย)
+  .get(
+    "/sold",
+    async ({ payload, query }) => {
+      const limit = Math.min(parseInt(String(query.limit ?? "20"), 10), 100);
+      const data = await ordersService.listOrdersForSeller({
+        sellerId: payload.id,
+        limit,
+      });
+      return { success: true, data };
+    },
+    {
+      auth: true,
+      query: t.Object({ limit: t.Optional(t.Union([t.String(), t.Number()])) }),
+    }
+  )
+
+  // รายละเอียดออเดอร์ (ทั้งผู้ซื้อ/ผู้ขายที่เกี่ยวข้องต้องเห็นได้)
+  .get(
+    "/:id",
+    async ({ params, payload, set }) => {
+      const data = await ordersService.getOrderDetail({
+        orderId: params.id,
+        userId: payload.id,
+      });
+      if (!data) {
+        set.status = 404;
+        return { success: false, error: "Order not found", data: null };
+      }
+      return { success: true, data };
+    },
+    {
+      auth: true,
+      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+    }
+  )
+
+  .post(
+    "/orders/:id/accept",
+    async ({ params, payload, set }) => {
+      const sellerId = payload.id;
+      const orderId = params.id;
+
+      const ok = await ordersService.sellerAccept({ orderId, sellerId });
+      if (!ok.ok) {
+        set.status = ok.status ?? 400;
+        return { success: false, error: ok.error };
+      }
+
+      return { success: true, data: { status: "READY_TO_TRADE" } };
+    },
+    { auth: true }
+  );

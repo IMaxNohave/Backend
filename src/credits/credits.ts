@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { dbClient } from "@db/client";
 import * as schema from "../db/schema";
-import { authMiddleware, extractToken } from "../middleware/auth";
 import axios from "axios";
 import { betterAuth } from "lib/auth-macro";
 
@@ -20,10 +19,11 @@ export const creditsRoutes = new Elysia({ prefix: "/v1/credits" })
   // 5. Add slip (Deposit)
   .post(
     "/depose",
-    async ({ body, headers, set }) => {
+    async ({ body, payload, set }) => {
       try {
-        const userId = body.id;
-
+        const userId = payload.id;
+        console.log(body);
+        console.log(payload);
         const slipResp = await axios.post(
           SLIP2GO_API,
           {
@@ -129,17 +129,17 @@ export const creditsRoutes = new Elysia({ prefix: "/v1/credits" })
       body: t.Object({
         imageUrl: t.String({ description: "Slip image URL" }),
       }),
+      auth: true,
     }
   )
 
   // 6. Withdraw
   .post(
     "/withdraw",
-    async ({ body, headers, set }) => {
-      try {
-        const token = extractToken(headers.authorization);
-        const userId = await authMiddleware(token);
+    async ({ body, payload, set }) => {
+      const userId = payload.id;
 
+      try {
         const wallet = await dbClient
           .select()
           .from(schema.wallet)
@@ -190,5 +190,6 @@ export const creditsRoutes = new Elysia({ prefix: "/v1/credits" })
         method: t.Optional(t.String()),
         accountInfo: t.Object({}, { additionalProperties: true }),
       }),
+      auth: true,
     }
   );
