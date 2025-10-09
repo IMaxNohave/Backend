@@ -1,0 +1,1 @@
+ALTER TABLE `order_event` MODIFY COLUMN `actor_id` varchar(36);

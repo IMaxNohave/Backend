@@ -15,9 +15,11 @@ function buildWhere(filters: Filters) {
   // เงื่อนไขพื้นฐาน: ต้อง active
   const where = [eq(schema.item.isActive, true)] as any[];
 
-  if (filters.name)     where.push(like(schema.item.name, `%${filters.name}%`));
-  if (filters.detail)   where.push(like(schema.item.detail, `%${filters.detail}%`));
-  if (filters.category) where.push(like(schema.category.name, `%${filters.category}%`));
+  if (filters.name) where.push(like(schema.item.name, `%${filters.name}%`));
+  if (filters.detail)
+    where.push(like(schema.item.detail, `%${filters.detail}%`));
+  if (filters.category)
+    where.push(like(schema.category.name, `%${filters.category}%`));
   if (filters.status && !isNaN(+filters.status)) {
     where.push(eq(schema.item.status, +filters.status));
   }
@@ -112,19 +114,24 @@ export abstract class homeService {
     const exist = await dbClient
       .select({ id: schema.item.id })
       .from(schema.item)
-      .where(and(eq(schema.item.id, itemId), eq(schema.item.sellerId, sellerId)))
+      .where(
+        and(eq(schema.item.id, itemId), eq(schema.item.sellerId, sellerId))
+      )
       .limit(1);
 
     if (!exist.length) return false;
 
     const updateData: any = { updatedAt: new Date() };
-    if (patch.image !== undefined)       updateData.image = patch.image;
-    if (patch.name)                      updateData.name = patch.name;
+    if (patch.image !== undefined) updateData.image = patch.image;
+    if (patch.name) updateData.name = patch.name;
     if (patch.description !== undefined) updateData.detail = patch.description;
-    if (patch.price !== undefined)       updateData.price = patch.price.toString();
-    if (patch.category)                  updateData.categoryId = patch.category;
+    if (patch.price !== undefined) updateData.price = patch.price.toString();
+    if (patch.category) updateData.categoryId = patch.category;
 
-    await dbClient.update(schema.item).set(updateData).where(eq(schema.item.id, itemId));
+    await dbClient
+      .update(schema.item)
+      .set(updateData)
+      .where(eq(schema.item.id, itemId));
     return true;
   }
 
@@ -138,58 +145,130 @@ export abstract class homeService {
   }: {
     buyerId: string;
     itemId: string;
-  }): Promise<{ ok: boolean; orderId?: string; error?: string; status?: number }> {
+  }): Promise<{
+    ok: boolean;
+    orderId?: string;
+    error?: string;
+    status?: number;
+  }> {
     return dbClient.transaction(async (tx) => {
-      // ต้องเป็นสินค้า active + status = 1 (พร้อมขาย)
-      const itemRows = await tx
-        .select({
-          id: schema.item.id,
-          sellerId: schema.item.sellerId,
-          price: schema.item.price,
-        })
-        .from(schema.item)
-        .where(
-          and(eq(schema.item.id, itemId), eq(schema.item.isActive, true), eq(schema.item.status, 1))
-        )
-        .limit(1);
+      try {
+        // 1) ตรวจ item ยังขายได้
+        const [it] = await tx
+          .select({
+            id: schema.item.id,
+            sellerId: schema.item.sellerId,
+            price: schema.item.price,
+            isActive: schema.item.isActive,
+            status: schema.item.status,
+          })
+          .from(schema.item)
+          .where(
+            and(
+              eq(schema.item.id, itemId),
+              eq(schema.item.isActive, true),
+              eq(schema.item.status, 1) // พร้อมขาย
+            )
+          )
+          .limit(1);
 
-      if (!itemRows.length) {
-        return { ok: false, error: "Item not available", status: 400 };
+        if (!it) return { ok: false, error: "Item not available", status: 400 };
+        if (it.sellerId === buyerId)
+          return { ok: false, error: "Cannot buy your own item", status: 400 };
+
+        const orderId = uuidv4();
+        const quantity = 1;
+        const total = Number(it.price) * quantity;
+
+        // 2) ล็อคกระเป๋าเงินผู้ซื้อ + ตรวจยอด (ใช้ SELECT ... FOR UPDATE หรือ update arithmetic)
+        // วิธี A: ดึงค่ามาเช็คก่อน
+        const wallet = await tx.query.wallet.findFirst({
+          where: eq(schema.wallet.userId, buyerId),
+          columns: { balance: true, held: true },
+          // ถ้าต้องการล็อค FOR UPDATE: ใช้ raw SQL ใน Drizzle เวอร์ชันที่รองรับ
+        });
+        if (!wallet)
+          return { ok: false, error: "Wallet not found", status: 400 };
+        if (Number(wallet.balance) < total)
+          return { ok: false, error: "Insufficient balance", status: 402 };
+
+        // 4) สร้างคำสั่งซื้อ (ตั้งเป็น ESCROW_HELD)
+        const deadline = new Date();
+        deadline.setDate(deadline.getDate() + 7);
+
+        await tx.insert(schema.orders).values({
+          id: orderId,
+          itemId: itemId,
+          sellerId: it.sellerId!,
+          buyerId,
+          quantity,
+          priceAtPurchase: it.price,
+          total: total.toFixed(2),
+          status: "ESCROW_HELD", // ← ชำระสำเร็จและถือเงินแล้ว
+          deadlineAt: deadline,
+        });
+
+        // 3) โยกยอดเข้า held (atomic)
+        await tx
+          .update(schema.wallet)
+          .set({
+            // ใช้ arithmetic ใน DB ป้องกัน race
+            balance: sql`balance - ${total}`,
+            held: sql`held + ${total}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.wallet.userId, buyerId));
+
+        // 3.1) wallet_tx = HOLD
+        await tx.insert(schema.walletTx).values({
+          id: uuidv4(),
+          userId: buyerId,
+          orderId,
+          action: "3", // HOLD
+          amount: total.toFixed(2),
+        });
+
+        // 5) ยิง events: ORDER_CREATED, DEADLINE_SET, ESCROW_HELD
+        await tx.insert(schema.orderEvent).values([
+          {
+            id: uuidv4(),
+            orderId,
+            actorId: buyerId,
+            type: "ORDER_CREATED",
+            message: "Order created by buyer",
+          },
+          {
+            id: uuidv4(),
+            orderId,
+            actorId: null,
+            type: "DEADLINE_SET",
+            message: "Deadline set to 7 days",
+            // meta: { deadlineAt: deadline.toISOString() },
+          },
+          {
+            id: uuidv4(),
+            orderId,
+            actorId: buyerId,
+            type: "ESCROW_HELD",
+            message: "Escrow funded",
+            // meta: { amount: total.toFixed(2) },
+          },
+        ]);
+
+        // 6) อัปเดตสถานะสินค้า (กำลังดำเนินการ)
+        await tx
+          .update(schema.item)
+          .set({ status: 2, updatedAt: new Date() })
+          .where(eq(schema.item.id, itemId));
+
+        return { ok: true, orderId };
+      } catch (e) {
+        console.error("Transaction error:", e);
+        return { ok: false, error: "Transaction error", status: 500 };
       }
-
-      const it = itemRows[0];
-      if (it.sellerId === buyerId) {
-        return { ok: false, error: "Cannot buy your own item", status: 400 };
-      }
-
-      const orderId = uuidv4();
-      const quantity = 1;
-      const total = parseFloat(it.price) * quantity;
-
-      const deadline = new Date();
-      deadline.setDate(deadline.getDate() + 7);
-
-      // สร้างคำสั่งซื้อ
-      await tx.insert(schema.orders).values({
-        id: orderId,
-        itemId: itemId,
-        sellerId: it.sellerId!,
-        buyerId,
-        quantity,
-        priceAtPurchase: it.price,
-        total: total.toString(),
-        status: "PENDING",
-        deadlineAt: deadline,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      // อัปเดตสถานะ item → 2 (กำลังดำเนินการ)
-      await tx.update(schema.item).set({ status: 2 }).where(eq(schema.item.id, itemId));
-
-      return { ok: true, orderId };
     });
   }
+
   /**
    * ดึงรายการหมวดหมู่ที่ active ทั้งหมด เรียงตามชื่อ
    */

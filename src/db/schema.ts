@@ -118,6 +118,20 @@ export const orders = mysqlTable("orders", {
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
 
+export const orderEvent = mysqlTable("order_event", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  orderId: varchar("order_id", { length: 36 })
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  actorId: varchar("actor_id", { length: 36 }).references(() => user.id, {
+    onDelete: "cascade",
+  }),
+  // quantity: int("quantity").notNull(),
+  type: text("type").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const orderConfirm = mysqlTable("order_confirm", {
   orderId: varchar("order_id", { length: 36 })
     .primaryKey()
@@ -150,9 +164,9 @@ export const dispute = mysqlTable("dispute", {
 
 export const evidence = mysqlTable("evidence", {
   id: varchar("id", { length: 36 }).primaryKey(),
-  disputeId: varchar("dispute_id", { length: 36 })
+  orderId: varchar("order_id", { length: 36 })
     .notNull()
-    .references(() => dispute.id, { onDelete: "cascade" }),
+    .references(() => orders.id, { onDelete: "cascade" }),
   byUserId: varchar("by_user_id", { length: 36 })
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
