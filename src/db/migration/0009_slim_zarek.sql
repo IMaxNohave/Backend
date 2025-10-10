@@ -1,0 +1,1 @@
+ALTER TABLE `user` MODIFY COLUMN `user_type` int NOT NULL DEFAULT 1;
