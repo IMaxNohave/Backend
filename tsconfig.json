@@ -104,6 +104,6 @@
       "@db/*": ["db/*"]
     }
   },
-  "include": ["src", "drizzle.config.ts"]
+  "include": ["src", "drizzle.config.ts", "scripts"]
 
 }

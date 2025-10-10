@@ -57,6 +57,20 @@
       "when": 1759992606350,
       "tag": "0007_flawless_marrow",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1760103664543,
+      "tag": "0008_simple_ezekiel",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1760103856273,
+      "tag": "0009_slim_zarek",
+      "breakpoints": true
     }
   ]
 }

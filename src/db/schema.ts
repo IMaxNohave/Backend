@@ -15,6 +15,7 @@ export const user = mysqlTable("user", {
   email: varchar("email", { length: 255 }).notNull().unique(),
   emailVerified: boolean("email_verified").notNull(),
   image: text("image"),
+  user_type: int("user_type").notNull().default(1), // 1=user, 2=admin
   createdAt: timestamp("created_at").notNull(),
   updatedAt: timestamp("updated_at").notNull(),
 });
@@ -216,11 +217,31 @@ export const walletTx = mysqlTable("wallet_tx", {
   orderId: varchar("order_id", { length: 36 }).references(() => orders.id, {
     onDelete: "set null",
   }),
+  holdId: varchar("hold_id", { length: 32 }).references(() => walletHold.id, {
+    onDelete: "cascade",
+  }),
   action: varchar("action", { length: 32 })
     .notNull()
     .references(() => actionType.id, { onDelete: "cascade" }),
+
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const walletHold = mysqlTable("wallet_hold", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  userId: varchar("user_id", { length: 36 })
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  orderId: varchar("order_id", { length: 36 })
+    .notNull()
+    .references(() => orders.id, {
+      onDelete: "cascade",
+    }),
+  status: int("status").notNull().default(1),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
 
 export const depositRequest = mysqlTable("deposit_request", {
