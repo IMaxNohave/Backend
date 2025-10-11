@@ -113,13 +113,14 @@ export const orders = mysqlTable("orders", {
     scale: 2,
   }).notNull(),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
-  status: text("status").notNull(), // PENDING_SELLER|AWAIT_PAYMENT|ESCROW_HELD|READY_TO_TRADE|AWAIT_DELIVERY|AWAIT_CONFIRM|DISPUTED|COMPLETED|CANCELLED|EXPIRED
+  status: text("status").notNull().default("ESCROW_HELD"), //ESCROW_HELD IN_TRADE AWAIT_CONFIRM EXPIRED DISPUTED COMPLETED/CANCELLED
   deadlineAt: timestamp("deadline_at", { fsp: 3 }).notNull(),
+  tradeDeadlineAt: timestamp("trade_deadline_at", { fsp: 3 }),
   sellerAcceptAt: timestamp("seller_accepted_at", { fsp: 3 }),
   sellerDeclinedAt: timestamp("seller_declined_at", { fsp: 3 }),
   sellerConfirmedAt: timestamp("seller_confirmed_at", { fsp: 3 }),
   buyerConfirmedAt: timestamp("buyer_confirmed_at", { fsp: 3 }),
-  cancelledBy: timestamp("cancelled_by", { fsp: 3 }),
+  cancelledBy: text("cancelled_by"),
   cancelledAt: timestamp("cancelled_at", { fsp: 3 }),
   disputedAt: timestamp("disputed_at", { fsp: 3 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
