@@ -14,9 +14,8 @@
     "better-auth": "^1.3.9",
     "dotenv": "^17.2.2",
     "drizzle-orm": "^0.44.5",
-    "elysia": "^1.4.9",
-    "mysql2": "^3.14.5",
-    "node-cron": "^4.2.1"
+    "elysia": "latest",
+    "mysql2": "^3.14.5"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",
