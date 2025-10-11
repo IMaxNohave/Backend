@@ -15,6 +15,18 @@ export const auth = betterAuth({
             jwks
         }
     }),
+
+     user: {
+        additionalFields: {
+            userType: {
+                type: "number",
+                fieldName: "user_type", // <- คอลัมน์จริงใน MySQL
+                required: false,
+                defaultValue: 1,        // 1=user, 2=admin
+                input: false,           // ไม่รับจาก client ตอน sign up
+            },
+        },
+    },
     
     emailAndPassword: {
         enabled: true, 
@@ -36,7 +48,8 @@ export const auth = betterAuth({
                     return { 
                         id: user.id, 
                         email: user.email, 
-                        username: user.name 
+                        username: user.name,
+                        user_type: user.userType
                     }
                 }
             },
