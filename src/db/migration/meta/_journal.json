@@ -71,6 +71,13 @@
       "when": 1760103856273,
       "tag": "0009_slim_zarek",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1760191458727,
+      "tag": "0010_low_proudstar",
+      "breakpoints": true
     }
   ]
 }

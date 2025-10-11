@@ -113,8 +113,15 @@ export const orders = mysqlTable("orders", {
     scale: 2,
   }).notNull(),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
-  status: text("status").notNull(),
+  status: text("status").notNull(), // PENDING_SELLER|AWAIT_PAYMENT|ESCROW_HELD|READY_TO_TRADE|AWAIT_DELIVERY|AWAIT_CONFIRM|DISPUTED|COMPLETED|CANCELLED|EXPIRED
   deadlineAt: timestamp("deadline_at", { fsp: 3 }).notNull(),
+  sellerAcceptAt: timestamp("seller_accepted_at", { fsp: 3 }),
+  sellerDeclinedAt: timestamp("seller_declined_at", { fsp: 3 }),
+  sellerConfirmedAt: timestamp("seller_confirmed_at", { fsp: 3 }),
+  buyerConfirmedAt: timestamp("buyer_confirmed_at", { fsp: 3 }),
+  cancelledBy: timestamp("cancelled_by", { fsp: 3 }),
+  cancelledAt: timestamp("cancelled_at", { fsp: 3 }),
+  disputedAt: timestamp("disputed_at", { fsp: 3 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
@@ -133,13 +140,13 @@ export const orderEvent = mysqlTable("order_event", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const orderConfirm = mysqlTable("order_confirm", {
-  orderId: varchar("order_id", { length: 36 })
-    .primaryKey()
-    .references(() => orders.id, { onDelete: "cascade" }),
-  sellerConfirmedAt: timestamp("seller_confirmed_at", { fsp: 3 }),
-  buyerConfirmedAt: timestamp("buyer_confirmed_at", { fsp: 3 }),
-});
+// export const orderConfirm = mysqlTable("order_confirm", {
+//   orderId: varchar("order_id", { length: 36 })
+//     .primaryKey()
+//     .references(() => orders.id, { onDelete: "cascade" }),
+//   sellerConfirmedAt: timestamp("seller_confirmed_at", { fsp: 3 }),
+//   buyerConfirmedAt: timestamp("buyer_confirmed_at", { fsp: 3 }),
+// });
 
 export const dispute = mysqlTable("dispute", {
   id: varchar("id", { length: 36 }).primaryKey(),
