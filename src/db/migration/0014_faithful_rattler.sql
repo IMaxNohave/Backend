@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `cancelled_by` text;
