@@ -17,20 +17,21 @@ import { ItemsController } from "item/items.controller";
 import { OrdersController } from "order/orders.controller";
 import { AdminController } from "admin/admin.controller";
 import { sseHub } from "./lib/sse";
+import { sseRoutes } from "./routes/sse";
 const app = new Elysia()
   .mount(auth.handler)
   .use(cors())
-  .use(
-    swagger({
-      documentation: {
-        info: {
-          title: "Marketplace API",
-          version: "1.0.0",
-          description: "Complete E-commerce marketplace API",
-        },
-      },
-    }) as any
-  )
+  // .use(
+  //   swagger({
+  //     documentation: {
+  //       info: {
+  //         title: "Marketplace API",
+  //         version: "1.0.0",
+  //         description: "Complete E-commerce marketplace API",
+  //       },
+  //     },
+  //   }) as any
+  // )
   .use(openapi())
 
   .use(UserController)
@@ -46,6 +47,7 @@ const app = new Elysia()
   .use(loginRoutes)
   //.use(ordersRoutes)
   .use(balanceRoutes)
+  .use(sseRoutes)
   .get("/v1/sse", ({ query }) => {
     const topic = (query?.topic as string) || "";
     if (!topic) {
