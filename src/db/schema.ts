@@ -225,9 +225,9 @@ export const walletTx = mysqlTable("wallet_tx", {
   orderId: varchar("order_id", { length: 36 }).references(() => orders.id, {
     onDelete: "set null",
   }),
-  holdId: varchar("hold_id", { length: 32 }).references(() => walletHold.id, {
-    onDelete: "cascade",
-  }),
+  // holdId: varchar("hold_id", { length: 32 }).references(() => walletHold.id, {
+  //   onDelete: "cascade",
+  // }),
   action: varchar("action", { length: 32 })
     .notNull()
     .references(() => actionType.id, { onDelete: "cascade" }),

@@ -106,6 +106,13 @@
       "when": 1760195555227,
       "tag": "0014_faithful_rattler",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "5",
+      "when": 1760253408453,
+      "tag": "0015_parched_gargoyle",
+      "breakpoints": true
     }
   ]
 }
