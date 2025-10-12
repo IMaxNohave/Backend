@@ -201,6 +201,25 @@ export const orderMessage = mysqlTable("order_message", {
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
 
+export const orderChatState = mysqlTable("order_chat_state", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  orderId: varchar("order_id", { length: 36 })
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  userId: varchar("user_id", { length: 36 }).references(() => user.id, {
+    onDelete: "set null",
+  }),
+  lastReadMessageId: varchar("last_read_message_id", { length: 36 }).references(
+    () => orderMessage.id,
+    {
+      onDelete: "cascade",
+    }
+  ),
+  lastReadAt: timestamp("last_read_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
 export const wallet = mysqlTable("wallet", {
   userId: varchar("user_id", { length: 36 })
     .primaryKey()
