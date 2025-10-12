@@ -87,4 +87,48 @@ export const OrdersController = new Elysia({
       };
     },
     { auth: true }
+  )
+
+  .post(
+    "/:id/confirm/seller",
+    async ({ params, payload, set }) => {
+      const sellerId = payload.id;
+      const orderId = params.id;
+
+      const ok = (await ordersService.sellerConfirm({ orderId, sellerId })) as {
+        ok: boolean;
+        status?: number;
+        error?: string;
+      };
+      if (!ok.ok) {
+        set.status = ok.status ?? 400;
+        return { success: false, error: ok.error };
+      }
+      // service จะจัดการปล่อย escrow และอัปเดตสถานะเองเมื่อครบสองฝั่ง
+      return { success: true };
+    },
+    {
+      auth: true,
+      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+    }
+  )
+
+  // ผู้ซื้อยืนยันรับ (ถ้าอีกฝั่งเคยยืนยันแล้ว -> จะจบและปล่อยเอสโครว์ใน service)
+  .post(
+    "/:id/confirm/buyer",
+    async ({ params, payload, set }) => {
+      const buyerId = payload.id;
+      const orderId = params.id;
+
+      const ok = await ordersService.buyerConfirm({ orderId, buyerId });
+      if (!ok.ok) {
+        set.status = ok.status ?? 400;
+        return { success: false, error: ok.error };
+      }
+      return { success: true };
+    },
+    {
+      auth: true,
+      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+    }
   );

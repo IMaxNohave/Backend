@@ -87,7 +87,7 @@ export abstract class ordersService {
       .orderBy(desc(schema.orders.createdAt))
       .limit(limit);
 
-    return rows.map(mapOrderRow);
+    return rows;
   }
 
   static async listOrdersForSeller({
@@ -132,7 +132,7 @@ export abstract class ordersService {
       .orderBy(desc(schema.orders.createdAt))
       .limit(limit);
 
-    return rows.map(mapOrderRow);
+    return rows;
   }
 
   static async getOrderDetail({
@@ -260,51 +260,56 @@ export abstract class ordersService {
     orderId: string;
     sellerId: string;
   }) {
-    const now = new Date();
-    return dbClient.transaction(async (tx) => {
-      const o = await tx.query.orders.findFirst({
-        where: eq(schema.orders.id, orderId),
-      });
-      if (!o) return { ok: false, error: "Not found", status: 404 };
-      if (o.sellerId !== sellerId)
-        return { ok: false, error: "Forbidden", status: 403 };
-      if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(o.status))
-        return { ok: false, error: "Invalid state", status: 409 };
-
-      await tx
-        .update(schema.orders)
-        .set({
-          sellerConfirmedAt: now,
-          status: o.buyerConfirmedAt ? "COMPLETED" : "AWAIT_CONFIRM",
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(schema.orders.id, orderId),
-            isNull(schema.orders.sellerConfirmedAt)
-          )
-        );
-
-      await tx.insert(schema.orderEvent).values({
-        id: uuidv4(),
-        orderId,
-        actorId: sellerId,
-        type: "SELLER_CONFIRMED",
-        message: "Seller confirmed",
-      });
-
-      if (o.buyerConfirmedAt) {
-        await releaseAndPayout(tx, {
-          id: o.id,
-          itemId: o.itemId,
-          buyerId: o.buyerId,
-          sellerId: o.sellerId,
-          total: o.total,
+    try {
+      const now = new Date();
+      return dbClient.transaction(async (tx) => {
+        const o = await tx.query.orders.findFirst({
+          where: eq(schema.orders.id, orderId),
         });
-      }
+        if (!o) return { ok: false, error: "Not found", status: 404 };
+        if (o.sellerId !== sellerId)
+          return { ok: false, error: "Forbidden", status: 403 };
+        if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(o.status))
+          return { ok: false, error: "Invalid state", status: 409 };
 
-      return { ok: true };
-    });
+        await tx
+          .update(schema.orders)
+          .set({
+            sellerConfirmedAt: now,
+            status: o.buyerConfirmedAt ? "COMPLETED" : "AWAIT_CONFIRM",
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.orders.id, orderId),
+              isNull(schema.orders.sellerConfirmedAt)
+            )
+          );
+
+        await tx.insert(schema.orderEvent).values({
+          id: uuidv4(),
+          orderId,
+          actorId: sellerId,
+          type: "SELLER_CONFIRMED",
+          message: "Seller confirmed",
+        });
+
+        if (o.buyerConfirmedAt) {
+          await releaseAndPayout(tx, {
+            id: o.id,
+            itemId: o.itemId,
+            buyerId: o.buyerId,
+            sellerId: o.sellerId,
+            total: o.total,
+          });
+        }
+
+        return { ok: true };
+      });
+    } catch (error) {
+      console.error("Error in sellerConfirm:", error);
+      return error; // re-throw the error after logging it
+    }
   }
 
   static async buyerConfirm({
@@ -380,7 +385,7 @@ async function releaseAndPayout(
   const existingRelease = await tx.query.walletTx.findFirst({
     where: and(
       eq(schema.walletTx.orderId, order.id),
-      eq(schema.walletTx.action, "RELEASE")
+      eq(schema.walletTx.action, "5")
     ),
     columns: { id: true },
   });
@@ -401,7 +406,7 @@ async function releaseAndPayout(
     id: uuidv4(),
     userId: order.buyerId,
     orderId: order.id,
-    action: "RELEASE", // ปลด hold ของ buyer
+    action: "5", // RELEASE
     amount: amountStr,
     createdAt: now,
   });
@@ -419,7 +424,7 @@ async function releaseAndPayout(
     id: uuidv4(),
     userId: order.sellerId,
     orderId: order.id,
-    action: "CREDIT", // หรือ 'PAYOUT' ถ้าจะนับเป็นจ่ายออกทันที
+    action: "7", // TRABSFER (PAYOUT)
     amount: amountStr,
     createdAt: now,
   });
