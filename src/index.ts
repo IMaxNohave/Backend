@@ -15,8 +15,8 @@ import { uploadR2 } from "upload-r2/upload-r2";
 import { HomeController } from "home/home.controller";
 import { ItemsController } from "item/items.controller";
 import { OrdersController } from "order/orders.controller";
+import { AdminController } from "admin/admin.controller";
 import { sseHub } from "./lib/sse";
-
 const app = new Elysia()
   .mount(auth.handler)
   .use(cors())
@@ -38,6 +38,7 @@ const app = new Elysia()
   .use(uploadR2)
   .use(ItemsController)
   .use(OrdersController)
+  .use(AdminController)
   // i jao nay tum yang mai dai edit
   .use(salesRoutes)
   .use(creditsRoutes)
