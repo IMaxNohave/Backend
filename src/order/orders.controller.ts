@@ -2,6 +2,7 @@
 import Elysia, { t } from "elysia";
 import { ordersService } from "./orders.service";
 import { betterAuth } from "lib/auth-macro";
+import { sseHub } from "../lib/sse"; // path ตามจริงของคุณ
 
 export const OrdersController = new Elysia({
   name: "orders.controller",
@@ -81,6 +82,13 @@ export const OrdersController = new Elysia({
         set.status = ok.status ?? 400;
         return { success: false, error: ok.error };
       }
+      console.log("publish to topic", `user:${sellerId}`);
+      // sseHub.publish(`user:${buyerId}`, "order.update", { orderId, action: "accept" });
+      sseHub.publish(`user:${sellerId}`, "order.update", {
+        orderId,
+        action: "accept",
+      });
+
       return {
         success: true,
         data: { status: "IN_TRADE", trade_deadline_at: ok.tradeDeadlineAt },
