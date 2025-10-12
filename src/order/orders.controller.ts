@@ -63,8 +63,16 @@ export const OrdersController = new Elysia({
   )
 
   .post(
-    "/orders/:id/accept",
-    async ({ params, payload, set }) => {
+    "/:id/accept",
+    async ({
+      params,
+      payload,
+      set,
+    }: {
+      params: { id: string };
+      payload: any;
+      set: any;
+    }) => {
       const sellerId = payload.id;
       const orderId = params.id;
 
@@ -73,8 +81,10 @@ export const OrdersController = new Elysia({
         set.status = ok.status ?? 400;
         return { success: false, error: ok.error };
       }
-
-      return { success: true, data: { status: "READY_TO_TRADE" } };
+      return {
+        success: true,
+        data: { status: "IN_TRADE", trade_deadline_at: ok.tradeDeadlineAt },
+      };
     },
     { auth: true }
   );
