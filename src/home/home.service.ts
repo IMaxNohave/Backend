@@ -219,7 +219,16 @@ export abstract class homeService {
           })
           .where(eq(schema.wallet.userId, buyerId));
 
-        // 3.1) wallet_tx = HOLD
+        //   // 3.1) wallet_hold.status = 0 (incomplete)
+        // await tx.insert(schema.walletHold).values({
+        //   id: uuidv4(),
+        //   userId: buyerId,
+        //   orderId: orderId,
+        //   status: 0, // HOLD
+        //   amount: total.toFixed(2),
+        // });
+
+        // // 3.2) wallet_tx = HOLD
         await tx.insert(schema.walletTx).values({
           id: uuidv4(),
           userId: buyerId,
