@@ -200,7 +200,7 @@ export abstract class ordersService {
     orderId: string;
     sellerId: string;
   }) {
-    const TRADE_WINDOW_MIN = 120; // 2 ชม. หรือดึงจาก config
+    const TRADE_WINDOW_MIN = 120;
     const now = new Date();
     const tradeDeadline = new Date(
       now.getTime() + TRADE_WINDOW_MIN * 60 * 1000
@@ -219,9 +219,9 @@ export abstract class ordersService {
       await tx
         .update(schema.orders)
         .set({
-          status: "IN_TRADE", // ✅
+          status: "IN_TRADE",
           sellerAcceptAt: now,
-          tradeDeadlineAt: tradeDeadline, // ✅
+          tradeDeadlineAt: tradeDeadline,
           updatedAt: now,
         })
         .where(eq(schema.orders.id, orderId));
@@ -241,15 +241,17 @@ export abstract class ordersService {
           actorId: null,
           type: "DEADLINE_SET",
           message: "Trade deadline set",
-          // meta: {
-          //   tradeDeadlineAt: tradeDeadline.toISOString(),
-          //   minutes: TRADE_WINDOW_MIN,
-          // },
           createdAt: now,
         },
       ]);
 
-      return { ok: true, tradeDeadlineAt: tradeDeadline.toISOString() };
+      // ✅ ส่ง buyerId กลับไปด้วย เพื่อให้ layer ข้างบน publish ได้
+      return {
+        ok: true,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        tradeDeadlineAt: tradeDeadline.toISOString(),
+      };
     });
   }
 
@@ -260,56 +262,51 @@ export abstract class ordersService {
     orderId: string;
     sellerId: string;
   }) {
-    try {
-      const now = new Date();
-      return dbClient.transaction(async (tx) => {
-        const o = await tx.query.orders.findFirst({
-          where: eq(schema.orders.id, orderId),
-        });
-        if (!o) return { ok: false, error: "Not found", status: 404 };
-        if (o.sellerId !== sellerId)
-          return { ok: false, error: "Forbidden", status: 403 };
-        if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(o.status))
-          return { ok: false, error: "Invalid state", status: 409 };
-
-        await tx
-          .update(schema.orders)
-          .set({
-            sellerConfirmedAt: now,
-            status: o.buyerConfirmedAt ? "COMPLETED" : "AWAIT_CONFIRM",
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(schema.orders.id, orderId),
-              isNull(schema.orders.sellerConfirmedAt)
-            )
-          );
-
-        await tx.insert(schema.orderEvent).values({
-          id: uuidv4(),
-          orderId,
-          actorId: sellerId,
-          type: "SELLER_CONFIRMED",
-          message: "Seller confirmed",
-        });
-
-        if (o.buyerConfirmedAt) {
-          await releaseAndPayout(tx, {
-            id: o.id,
-            itemId: o.itemId,
-            buyerId: o.buyerId,
-            sellerId: o.sellerId,
-            total: o.total,
-          });
-        }
-
-        return { ok: true };
+    const now = new Date();
+    return dbClient.transaction(async (tx) => {
+      const o = await tx.query.orders.findFirst({
+        where: eq(schema.orders.id, orderId),
       });
-    } catch (error) {
-      console.error("Error in sellerConfirm:", error);
-      return error; // re-throw the error after logging it
-    }
+      if (!o) return { ok: false, error: "Not found", status: 404 };
+      if (o.sellerId !== sellerId)
+        return { ok: false, error: "Forbidden", status: 403 };
+      if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(o.status))
+        return { ok: false, error: "Invalid state", status: 409 };
+
+      await tx
+        .update(schema.orders)
+        .set({
+          sellerConfirmedAt: now,
+          status: o.buyerConfirmedAt ? "COMPLETED" : "AWAIT_CONFIRM",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.orders.id, orderId),
+            isNull(schema.orders.sellerConfirmedAt)
+          )
+        );
+
+      await tx.insert(schema.orderEvent).values({
+        id: uuidv4(),
+        orderId,
+        actorId: sellerId,
+        type: "SELLER_CONFIRMED",
+        message: "Seller confirmed",
+      });
+
+      if (o.buyerConfirmedAt) {
+        await releaseAndPayout(tx, {
+          id: o.id,
+          itemId: o.itemId,
+          buyerId: o.buyerId,
+          sellerId: o.sellerId,
+          total: o.total,
+        });
+      }
+
+      return { ok: true };
+    });
   }
 
   static async buyerConfirm({

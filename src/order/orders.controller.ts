@@ -63,17 +63,10 @@ export const OrdersController = new Elysia({
     }
   )
 
+  // Backend/src/routes/orders.ts (ใน handler .post("/:id/accept", ...))
   .post(
     "/:id/accept",
-    async ({
-      params,
-      payload,
-      set,
-    }: {
-      params: { id: string };
-      payload: any;
-      set: any;
-    }) => {
+    async ({ params, payload, set }) => {
       const sellerId = payload.id;
       const orderId = params.id;
 
@@ -82,11 +75,24 @@ export const OrdersController = new Elysia({
         set.status = ok.status ?? 400;
         return { success: false, error: ok.error };
       }
-      console.log("publish to topic", `user:${sellerId}`);
-      // sseHub.publish(`user:${buyerId}`, "order.update", { orderId, action: "accept" });
+
+      const { buyerId } = ok;
+
+      // ✅ ใส่ side แยกตาม channel ที่ส่ง
+      sseHub.publish(`user:${buyerId}`, "order.update", {
+        orderId,
+        action: "accept",
+        side: "buyer", // <- ฝั่งผู้ซื้อ
+      });
       sseHub.publish(`user:${sellerId}`, "order.update", {
         orderId,
         action: "accept",
+        side: "seller", // <- ฝั่งผู้ขาย
+      });
+      sseHub.publish(`order:${orderId}`, "order.update", {
+        orderId,
+        action: "accept",
+        // side: ไม่จำเป็นใน channel per-order (ทั้งสองฝั่งอาจฟังร่วม)
       });
 
       return {
@@ -103,22 +109,54 @@ export const OrdersController = new Elysia({
       const sellerId = payload.id;
       const orderId = params.id;
 
-      const ok = (await ordersService.sellerConfirm({ orderId, sellerId })) as {
-        ok: boolean;
-        status?: number;
-        error?: string;
-      };
+      const ok = await ordersService.sellerConfirm({ orderId, sellerId });
       if (!ok.ok) {
         set.status = ok.status ?? 400;
         return { success: false, error: ok.error };
       }
-      // service จะจัดการปล่อย escrow และอัปเดตสถานะเองเมื่อครบสองฝั่ง
+
+      // ให้ service ส่ง buyerId/sellerId และบอกว่าจบงานหรือยัง
+      const { buyerId, completed } = ok as unknown as {
+        buyerId: string;
+        completed?: boolean;
+      };
+
+      sseHub.publish(`user:${buyerId}`, "order.update", {
+        orderId,
+        action: "confirm_seller",
+        side: "buyer",
+      });
+      sseHub.publish(`user:${sellerId}`, "order.update", {
+        orderId,
+        action: "confirm_seller",
+        side: "seller",
+      });
+      sseHub.publish(`order:${orderId}`, "order.update", {
+        orderId,
+        action: "confirm_seller",
+      });
+
+      if (completed) {
+        // ถ้าครบสองฝั่งแล้วและ service เซ็ตเป็น COMPLETED แล้ว
+        sseHub.publish(`user:${buyerId}`, "order.update", {
+          orderId,
+          action: "completed",
+          side: "buyer",
+        });
+        sseHub.publish(`user:${sellerId}`, "order.update", {
+          orderId,
+          action: "completed",
+          side: "seller",
+        });
+        sseHub.publish(`order:${orderId}`, "order.update", {
+          orderId,
+          action: "completed",
+        });
+      }
+
       return { success: true };
     },
-    {
-      auth: true,
-      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
-    }
+    { auth: true }
   )
 
   // ผู้ซื้อยืนยันรับ (ถ้าอีกฝั่งเคยยืนยันแล้ว -> จะจบและปล่อยเอสโครว์ใน service)
@@ -133,10 +171,46 @@ export const OrdersController = new Elysia({
         set.status = ok.status ?? 400;
         return { success: false, error: ok.error };
       }
+
+      // ok is guaranteed to have sellerId and completed here
+      const { sellerId, completed } = ok as unknown as {
+        sellerId: string;
+        completed?: boolean;
+      };
+
+      sseHub.publish(`user:${buyerId}`, "order.update", {
+        orderId,
+        action: "confirm_buyer",
+        side: "buyer",
+      });
+      sseHub.publish(`user:${sellerId}`, "order.update", {
+        orderId,
+        action: "confirm_buyer",
+        side: "seller",
+      });
+      sseHub.publish(`order:${orderId}`, "order.update", {
+        orderId,
+        action: "confirm_buyer",
+      });
+
+      if (completed) {
+        sseHub.publish(`user:${buyerId}`, "order.update", {
+          orderId,
+          action: "completed",
+          side: "buyer",
+        });
+        sseHub.publish(`user:${sellerId}`, "order.update", {
+          orderId,
+          action: "completed",
+          side: "seller",
+        });
+        sseHub.publish(`order:${orderId}`, "order.update", {
+          orderId,
+          action: "completed",
+        });
+      }
+
       return { success: true };
     },
-    {
-      auth: true,
-      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
-    }
+    { auth: true }
   );
