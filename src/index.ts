@@ -18,6 +18,7 @@ import { OrdersController } from "order/orders.controller";
 import { AdminController } from "admin/admin.controller";
 import { sseHub } from "./lib/sse";
 import { sseRoutes } from "./routes/sse";
+import { OrdersChatController } from "order/orders.chat.controller";
 const app = new Elysia()
   .mount(auth.handler)
   .use(cors())
@@ -48,6 +49,7 @@ const app = new Elysia()
   //.use(ordersRoutes)
   .use(balanceRoutes)
   .use(sseRoutes)
+  .use(OrdersChatController)
   .get("/v1/sse", ({ query }) => {
     const topic = (query?.topic as string) || "";
     if (!topic) {
