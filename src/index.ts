@@ -15,6 +15,7 @@ import { uploadR2 } from "upload-r2/upload-r2";
 import { HomeController } from "home/home.controller";
 import { ItemsController } from "item/items.controller";
 import { OrdersController } from "order/orders.controller";
+import { sseHub } from "./lib/sse";
 
 const app = new Elysia()
   .mount(auth.handler)
@@ -44,6 +45,13 @@ const app = new Elysia()
   .use(loginRoutes)
   //.use(ordersRoutes)
   .use(balanceRoutes)
+  .get("/v1/sse", ({ query }) => {
+    const topic = (query?.topic as string) || "";
+    if (!topic) {
+      return new Response("topic is required", { status: 400 });
+    }
+    return sseHub.subscribe(topic);
+  })
 
   .get("/", () => "Hello Elysia")
   .listen(3000);
