@@ -15,7 +15,7 @@ export class EvidenceService {
     note?: string | null;
   }) {
     const id = randomUUID();
-    
+
     await db.insert(evidence).values({
       id,
       orderId: data.orderId,
@@ -26,13 +26,13 @@ export class EvidenceService {
     });
 
     // เปลี่ยนสถานะ order เป็น DISPUTED
-    await db
-      .update(orders)
-      .set({ 
-        status: "DISPUTED",
-        disputedAt: new Date(),
-      })
-      .where(eq(orders.id, data.orderId));
+    // await db
+    //   .update(orders)
+    //   .set({
+    //     status: "DISPUTED",
+    //     disputedAt: new Date(),
+    //   })
+    //   .where(eq(orders.id, data.orderId));
 
     return { id, ...data };
   }
@@ -56,12 +56,7 @@ export class EvidenceService {
     const result = await db
       .select()
       .from(evidence)
-      .where(
-        and(
-          eq(evidence.orderId, orderId),
-          eq(evidence.byUserId, userId)
-        )
-      )
+      .where(and(eq(evidence.orderId, orderId), eq(evidence.byUserId, userId)))
       .limit(1);
 
     return result[0] || null;
@@ -102,7 +97,7 @@ export class EvidenceService {
     }
 
     const order = orderResult[0];
-    
+
     // ต้องเป็น buyer หรือ seller
     const isParticipant = order.buyerId === userId || order.sellerId === userId;
     if (!isParticipant) {
@@ -110,8 +105,16 @@ export class EvidenceService {
     }
 
     // 2. ตรวจสอบสถานะ order ต้องเป็น IN_TRADE, AWAIT_CONFIRM หรือ DISPUTED
-    if (order.status !== "IN_TRADE" && order.status !== "AWAIT_CONFIRM" && order.status !== "DISPUTED") {
-      return { canUpload: false, reason: "Order must be in trading, awaiting confirmation, or disputed state" };
+    if (
+      order.status !== "IN_TRADE" &&
+      order.status !== "AWAIT_CONFIRM" &&
+      order.status !== "DISPUTED"
+    ) {
+      return {
+        canUpload: false,
+        reason:
+          "Order must be in trading, awaiting confirmation, or disputed state",
+      };
     }
 
     // 3. ตรวจสอบว่า user คนนี้ upload แล้วหรือยัง
