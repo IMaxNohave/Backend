@@ -4,7 +4,7 @@ import { swagger } from "@elysiajs/swagger";
 import openapi from "@elysiajs/openapi";
 import { auth } from "lib/auth";
 // Import routes
-import { salesRoutes } from "./routes/sales";
+import { salesRoutes } from "./sales/sales";
 import { creditsRoutes } from "./credits/credits";
 import { profileRoutes } from "./routes/profile";
 import { loginRoutes } from "./routes/login";
@@ -20,9 +20,11 @@ import { sseHub } from "./lib/sse";
 import { sseRoutes } from "./routes/sse";
 import { OrdersChatController } from "order/orders.chat.controller";
 import { startOrderExpireWorker } from "jobs/order-expire.queue";
+import { startItemExpireWorker } from "jobs/item-expire.queue";
 
 if (process.env.ENABLE_JOBS === "1") {
   startOrderExpireWorker();
+  startItemExpireWorker();
 }
 
 const app = new Elysia()
