@@ -3,7 +3,7 @@ import * as schema from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 
 export abstract class itemService {
-    static async getItemById({ id }: { id: string }) {
+  static async getItemById({ id }: { id: string }) {
     // แคสต์ DECIMAL -> number
     const priceNumber = sql<number>`CAST(${schema.item.price} AS DECIMAL(12,2))`;
 
@@ -23,6 +23,7 @@ export abstract class itemService {
 
         // category
         categoryName: schema.category.name,
+        expires_at: schema.item.expiresAt,
       })
       .from(schema.item)
       .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
@@ -43,10 +44,11 @@ export abstract class itemService {
       seller: r.seller,
       sellerEmail: r.sellerEmail,
       sellerId: r.sellerId,
-      description: r.detail,      // map detail -> description
-      rarity: null,               // ถ้ายังไม่มีคอลัมน์ สามารถคำนวณ/ใส่ null
+      description: r.detail, // map detail -> description
+      rarity: null, // ถ้ายังไม่มีคอลัมน์ สามารถคำนวณ/ใส่ null
       condition: null,
       status: r.status,
+      expiresAt: r.expires_at,
     };
 
     return item;

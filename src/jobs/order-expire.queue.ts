@@ -9,6 +9,10 @@ export type ExpireJob = {
 };
 
 const QUEUE_NAME = "order-expire";
+export const ITEM_EXPIRE_MIN = parseInt(
+  process.env.ITEM_EXPIRE_MIN ?? "1440",
+  10
+); // ดีฟอลต์ 24 ชม.
 
 export const orderExpireQueue = new Queue<ExpireJob>(QUEUE_NAME, {
   connection: bullConnection,

@@ -1,0 +1,1 @@
+ALTER TABLE `item` MODIFY COLUMN `expires_at` timestamp NOT NULL;

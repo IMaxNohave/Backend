@@ -44,6 +44,7 @@ function mapItemRow(r: {
   category_id: string | null;
   category_name: string | null;
   category_detail: string | null;
+  expires_at: Date | string | null; // ⬅️ เพิ่มบรรทัดนี้ (บาง DB/driver อาจเป็น string)
 }) {
   return {
     id: r.id,
@@ -56,8 +57,15 @@ function mapItemRow(r: {
       detail: r.category_detail,
     },
     image: r.image,
-    price: r.price, // number แล้ว
+    price: r.price,
     status: r.status,
+    // ⬅️ แปลงเป็น ISO string ให้ FE ใช้ง่ายเสมอ
+    expiresAt:
+      r.expires_at == null
+        ? null
+        : typeof r.expires_at === "string"
+        ? new Date(r.expires_at).toISOString()
+        : r.expires_at.toISOString(),
   };
 }
 
@@ -88,6 +96,7 @@ export abstract class homeService {
         category_id: schema.item.categoryId,
         category_name: schema.category.name,
         category_detail: schema.category.detail,
+        expires_at: schema.item.expiresAt,
       })
       .from(schema.item)
       .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
@@ -324,6 +333,7 @@ export abstract class homeService {
         category_id: schema.item.categoryId,
         category_name: schema.category.name,
         category_detail: schema.category.detail,
+        expires_at: schema.item.expiresAt,
       })
       .from(schema.item)
       .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
