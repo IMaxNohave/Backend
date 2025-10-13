@@ -496,6 +496,118 @@ export abstract class ordersService {
       return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
     });
   }
+
+  static async cancel({
+    orderId,
+    actorId,
+  }: {
+    orderId: string;
+    actorId: string;
+  }): Promise<
+    | { ok: true; buyerId: string; sellerId: string }
+    | { ok: false; status?: number; error: string }
+  > {
+    const now = new Date();
+
+    return dbClient.transaction(async (tx) => {
+      const o = await tx.query.orders.findFirst({
+        where: eq(schema.orders.id, orderId),
+      });
+      if (!o) return { ok: false, status: 404, error: "Order not found" };
+
+      // ตรวจสิทธิ์: ต้องเป็น buyer หรือ seller
+      if (o.buyerId !== actorId && o.sellerId !== actorId) {
+        return { ok: false, status: 403, error: "Forbidden" };
+      }
+
+      // สถานะปลายทางแล้ว ยกเลิกไม่ได้
+      if (["COMPLETED", "EXPIRED"].includes(o.status)) {
+        return { ok: false, status: 409, error: "Order already finalized" };
+      }
+
+      // ยกเลิกซ้ำ (idempotent) — ถือว่าสำเร็จ
+      if (o.status === "CANCELLED") {
+        return { ok: true, buyerId: o.buyerId, sellerId: o.sellerId };
+      }
+
+      // ถ้าปล่อยเงินไปแล้ว (RELEASE=5) ห้ามยกเลิก
+      const existedRelease = await tx.query.walletTx.findFirst({
+        where: and(
+          eq(schema.walletTx.orderId, o.id),
+          eq(schema.walletTx.action, "5")
+        ),
+        columns: { id: true },
+      });
+      if (existedRelease) {
+        return { ok: false, status: 409, error: "Order already released" };
+      }
+
+      // คืนเงินให้ buyer ถ้ายังไม่เคย REFUND
+      const existedRefund = await tx.query.walletTx.findFirst({
+        where: and(
+          eq(schema.walletTx.orderId, o.id),
+          eq(schema.walletTx.action, "6")
+        ),
+        columns: { id: true },
+      });
+
+      if (!existedRefund) {
+        const amountStr =
+          typeof o.total === "string" ? o.total : Number(o.total).toFixed(2);
+
+        // held - total, balance + total
+        await tx
+          .update(schema.wallet)
+          .set({
+            held: sql`held - ${amountStr}`,
+            balance: sql`balance + ${amountStr}`,
+            updatedAt: now,
+          })
+          .where(eq(schema.wallet.userId, o.buyerId));
+
+        await tx.insert(schema.walletTx).values({
+          id: uuidv4(),
+          userId: o.buyerId,
+          orderId: o.id,
+          action: "6", // REFUND
+          amount: amountStr,
+          createdAt: now,
+        });
+      }
+
+      // เปลี่ยนสถานะออเดอร์ -> CANCELLED
+      await tx
+        .update(schema.orders)
+        .set({
+          status: "CANCELLED",
+          cancelledBy: actorId,
+          cancelledAt: now,
+          updatedAt: now,
+        })
+        .where(eq(schema.orders.id, o.id));
+
+      // เปิดขายสินค้าอีกครั้ง (แล้วแต่นโยบายของคุณ)
+      await tx
+        .update(schema.item)
+        .set({ status: 1, isActive: true, updatedAt: now })
+        .where(eq(schema.item.id, o.itemId));
+
+      // เพิ่ม event
+      await tx.insert(schema.orderEvent).values({
+        id: uuidv4(),
+        orderId: o.id,
+        actorId: actorId,
+        type: "CANCELLED",
+        message: "Order cancelled",
+        createdAt: now,
+      });
+
+      // กัน double fire จากคิว
+      await cancelAllExpireJobs(o.id);
+
+      return { ok: true, buyerId: o.buyerId, sellerId: o.sellerId };
+    });
+  }
 }
 
 async function releaseAndPayout(
