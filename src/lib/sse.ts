@@ -12,7 +12,7 @@ class SSEHub {
 
   subscribe(topic: string) {
     const id = randomUUID();
-    console.log("[SSE] subscribe:", topic, "client:", id);
+    // console.log("[SSE] subscribe:", topic, "client:", id);
 
     let iv: any;
     let client: Client | null = null;
@@ -44,7 +44,7 @@ class SSEHub {
         }, 30000);
       },
       cancel: () => {
-        console.log("[SSE] cancel:", topic, "client:", id);
+        // console.log("[SSE] cancel:", topic, "client:", id);
         if (iv) clearInterval(iv);
         if (client) {
           this.channels.get(topic)?.delete(client);

@@ -8,7 +8,7 @@ import {
   scheduleTradeExpire,
   cancelAllExpireJobs, // หรือมีฟังก์ชันแยก cancelHoldExpire()
 } from "../jobs/order-expire.queue";
-import { TRADE_WINDOW_MS } from "./constants";
+import { TRADE_WINDOW_MS, DISPUTE_EXTENSION_MS } from "./constants";
 
 // ทำ alias ให้ตาราง user สองบทบาท
 const sellerUser = alias(schema.user, "seller");
@@ -678,6 +678,113 @@ export abstract class ordersService {
       await cancelAllExpireJobs(o.id);
 
       return { ok: true, buyerId: o.buyerId, sellerId: o.sellerId };
+    });
+  }
+
+  static async raiseDispute({
+    orderId,
+    actorId,
+    reasonCode,
+  }: {
+    orderId: string;
+    actorId: string;
+    reasonCode: string;
+  }): Promise<
+    | {
+        ok: true;
+        buyerId: string;
+        sellerId: string;
+        tradeDeadlineAt: string;
+      }
+    | { ok: false; status?: number; error: string }
+  > {
+    const now = new Date();
+
+    return dbClient.transaction(async (tx) => {
+      const o = await tx.query.orders.findFirst({
+        where: eq(schema.orders.id, orderId),
+      });
+      if (!o) return { ok: false, status: 404, error: "Order not found" };
+
+      // ต้องเป็น buyer หรือ seller เท่านั้น (admin ไปยิงผ่าน admin tool แยกได้)
+      if (o.buyerId !== actorId && o.sellerId !== actorId) {
+        return { ok: false, status: 403, error: "Forbidden" };
+      }
+
+      // อนุญาตให้ Dispute เฉพาะตอนกำลังเทรด/รอยืนยัน
+      if (!["IN_TRADE", "AWAIT_CONFIRM", "DISPUTED"].includes(o.status)) {
+        return { ok: false, status: 409, error: "Invalid state" };
+      }
+
+      // ถ้า DISPUTED แล้ว → idempotent: คืนข้อมูลเดิม
+      if (o.status === "DISPUTED") {
+        const baseDeadline = o.tradeDeadlineAt
+          ? new Date(o.tradeDeadlineAt).toISOString()
+          : now.toISOString();
+        return {
+          ok: true,
+          buyerId: o.buyerId,
+          sellerId: o.sellerId,
+          tradeDeadlineAt: baseDeadline,
+        };
+      }
+
+      // มี dispute เปิดอยู่แล้วหรือยัง
+      const existed = await tx.query.dispute.findFirst({
+        where: and(
+          eq(schema.dispute.orderId, orderId),
+          eq(schema.dispute.status, "OPEN")
+        ),
+      });
+      if (!existed) {
+        await tx.insert(schema.dispute).values({
+          id: uuidv4(),
+          orderId,
+          openedBy: actorId,
+          reasonCode,
+          bondAmount: "0",
+          status: "OPEN",
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      // ขยาย deadline (จาก max(now, tradeDeadlineAtเดิม) + extension)
+      const base = Math.max(
+        now.getTime(),
+        o.tradeDeadlineAt ? new Date(o.tradeDeadlineAt).getTime() : 0
+      );
+      const newTradeDeadline = new Date(base + DISPUTE_EXTENSION_MS);
+
+      await tx
+        .update(schema.orders)
+        .set({
+          status: "DISPUTED",
+          disputedAt: now,
+          tradeDeadlineAt: newTradeDeadline,
+          updatedAt: now,
+        })
+        .where(eq(schema.orders.id, orderId));
+
+      await tx.insert(schema.orderEvent).values({
+        id: uuidv4(),
+        orderId,
+        actorId,
+        type: "DISPUTED",
+        message: `Dispute opened: ${reasonCode}`,
+        createdAt: now,
+      });
+
+      // ยกเลิก job เดิม แล้วตั้งใหม่ตาม deadline ที่ขยาย
+      await cancelAllExpireJobs(orderId);
+      await scheduleTradeExpire(orderId, newTradeDeadline);
+
+      return {
+        ok: true,
+        buyerId: o.buyerId,
+        sellerId: o.sellerId,
+        tradeDeadlineAt: newTradeDeadline.toISOString(),
+      };
     });
   }
 }

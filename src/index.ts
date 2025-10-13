@@ -23,6 +23,7 @@ import { sseRoutes } from "./routes/sse";
 import { OrdersChatController } from "order/orders.chat.controller";
 import { startOrderExpireWorker } from "jobs/order-expire.queue";
 import { startItemExpireWorker } from "jobs/item-expire.queue";
+import { NotificationsController } from "routes/notifications.controller";
 
 if (process.env.ENABLE_JOBS === "1") {
   startOrderExpireWorker();
@@ -62,6 +63,8 @@ const app = new Elysia()
   .use(balanceRoutes)
   .use(sseRoutes)
   .use(OrdersChatController)
+  .use(NotificationsController)
+
   .get("/v1/sse", ({ query }) => {
     const topic = (query?.topic as string) || "";
     if (!topic) {
