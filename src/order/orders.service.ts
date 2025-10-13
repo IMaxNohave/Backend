@@ -147,56 +147,67 @@ export abstract class ordersService {
     orderId: string;
     userId: string;
   }) {
-    const rows = await dbClient
-      .select({
-        order_id: schema.orders.id,
-        order_status: schema.orders.status,
-        order_created_at: schema.orders.createdAt,
-        order_deadline_at: schema.orders.deadlineAt,
+    // 1) เช็คบทบาทจากตาราง user
+    const u = await dbClient
+      .select({ userType: schema.user.user_type }) // <-- ต้องมีคอลัมน์นี้ใน schema
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1);
 
-        trade_deadline_at: schema.orders.tradeDeadlineAt,
-        seller_accepted_at: schema.orders.sellerAcceptAt,
-        seller_confirmed_at: schema.orders.sellerConfirmedAt,
-        buyer_confirmed_at: schema.orders.buyerConfirmedAt,
-        cancelled_by: schema.orders.cancelledBy,
-        cancelled_at: schema.orders.cancelledAt,
-        disputed_at: schema.orders.disputedAt,
+    const isAdmin = u.length > 0 && u[0].userType === 2;
 
-        order_quantity: schema.orders.quantity,
-        price_at_purchase: schema.orders.priceAtPurchase,
-        total: schema.orders.total,
+    // 2) ฟิลด์ที่ select เหมือนเดิม
+    const fields = {
+      order_id: schema.orders.id,
+      order_status: schema.orders.status,
+      order_created_at: schema.orders.createdAt,
+      order_deadline_at: schema.orders.deadlineAt,
+      trade_deadline_at: schema.orders.tradeDeadlineAt,
+      seller_accepted_at: schema.orders.sellerAcceptAt,
+      seller_confirmed_at: schema.orders.sellerConfirmedAt,
+      buyer_confirmed_at: schema.orders.buyerConfirmedAt,
+      cancelled_by: schema.orders.cancelledBy,
+      cancelled_at: schema.orders.cancelledAt,
+      disputed_at: schema.orders.disputedAt,
 
-        item_id: schema.item.id,
-        item_name: schema.item.name,
-        item_image: schema.item.image,
+      order_quantity: schema.orders.quantity,
+      price_at_purchase: schema.orders.priceAtPurchase,
+      total: schema.orders.total,
 
-        seller_id: sellerUser.id,
-        seller_name: sellerUser.name,
+      item_id: schema.item.id,
+      item_name: schema.item.name,
+      item_image: schema.item.image,
 
-        buyer_id: buyerUser.id,
-        buyer_name: buyerUser.name,
-      })
+      seller_id: sellerUser.id,
+      seller_name: sellerUser.name,
+      buyer_id: buyerUser.id,
+      buyer_name: buyerUser.name,
+    };
+
+    // 3) ถ้าเป็นแอดมิน → ข้ามการบังคับเป็น buyer/seller
+    const base = dbClient
+      .select(fields)
       .from(schema.orders)
       .leftJoin(schema.item, eq(schema.orders.itemId, schema.item.id))
       .leftJoin(sellerUser, eq(schema.orders.sellerId, sellerUser.id))
-      .leftJoin(buyerUser, eq(schema.orders.buyerId, buyerUser.id))
-      .where(
-        and(
-          eq(schema.orders.id, orderId),
-          or(
-            eq(schema.orders.buyerId, userId),
-            eq(schema.orders.sellerId, userId)
+      .leftJoin(buyerUser, eq(schema.orders.buyerId, buyerUser.id));
+
+    const rows = await (isAdmin
+      ? base.where(eq(schema.orders.id, orderId)).limit(1)
+      : base
+          .where(
+            and(
+              eq(schema.orders.id, orderId),
+              or(
+                eq(schema.orders.buyerId, userId),
+                eq(schema.orders.sellerId, userId)
+              )
+            )
           )
-        )
-      )
-      .limit(1);
+          .limit(1));
 
     if (!rows.length) return null;
-    const row = rows[0];
-    return row;
-    // const canView = row.order_status === "ESCROW_HELD" ? false : true; // pending = ESCROW_HELD → ยังห้ามดูรายละเอียด
-    // if (canView) return row;
-    // return null;
+    return rows[0]; // หรือ mapOrderRow(rows[0]) ถ้า FE ใช้รูปแบบนั้น
   }
 
   static async sellerAccept({
