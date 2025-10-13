@@ -410,63 +410,63 @@ export abstract class ordersService {
   /**
    * raiseDispute: Manual dispute from buyer/seller
    */
-  static async raiseDispute(params: {
-    orderId: string;
-    actorId: string;
-    reasonCode?: string;
-  }): Promise<
-    | { ok: true; buyerId: string; sellerId: string }
-    | { ok: false; error: string; status: number }
-  > {
-    const { orderId, actorId, reasonCode } = params;
+  // static async raiseDispute(params: {
+  //   orderId: string;
+  //   actorId: string;
+  //   reasonCode?: string;
+  // }): Promise<
+  //   | { ok: true; buyerId: string; sellerId: string }
+  //   | { ok: false; error: string; status: number }
+  // > {
+  //   const { orderId, actorId, reasonCode } = params;
 
-    // 1) Load order
-    const order = await dbClient.query.orders.findFirst({
-      where: eq(schema.orders.id, orderId),
-      columns: { id: true, status: true, buyerId: true, sellerId: true },
-    });
+  //   // 1) Load order
+  //   const order = await dbClient.query.orders.findFirst({
+  //     where: eq(schema.orders.id, orderId),
+  //     columns: { id: true, status: true, buyerId: true, sellerId: true },
+  //   });
 
-    if (!order) {
-      return { ok: false, error: "Order not found", status: 404 };
-    }
+  //   if (!order) {
+  //     return { ok: false, error: "Order not found", status: 404 };
+  //   }
 
-    // 2) Check actor is participant
-    if (actorId !== order.buyerId && actorId !== order.sellerId) {
-      return { ok: false, error: "Not authorized", status: 403 };
-    }
+  //   // 2) Check actor is participant
+  //   if (actorId !== order.buyerId && actorId !== order.sellerId) {
+  //     return { ok: false, error: "Not authorized", status: 403 };
+  //   }
 
-    // 3) Check status allows dispute (IN_TRADE or AWAIT_CONFIRM)
-    if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(order.status)) {
-      return {
-        ok: false,
-        error: `Cannot dispute from status ${order.status}`,
-        status: 400,
-      };
-    }
+  //   // 3) Check status allows dispute (IN_TRADE or AWAIT_CONFIRM)
+  //   if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(order.status)) {
+  //     return {
+  //       ok: false,
+  //       error: `Cannot dispute from status ${order.status}`,
+  //       status: 400,
+  //     };
+  //   }
 
-    // 4) Update order to DISPUTED
-    const now = new Date();
-    await dbClient
-      .update(schema.orders)
-      .set({
-        status: "DISPUTED",
-        disputedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(schema.orders.id, orderId));
+  //   // 4) Update order to DISPUTED
+  //   const now = new Date();
+  //   await dbClient
+  //     .update(schema.orders)
+  //     .set({
+  //       status: "DISPUTED",
+  //       disputedAt: now,
+  //       updatedAt: now,
+  //     })
+  //     .where(eq(schema.orders.id, orderId));
 
-    // 5) Create order event
-    await dbClient.insert(schema.orderEvent).values({
-      id: uuidv4(),
-      orderId,
-      actorId,
-      type: "DISPUTED",
-      message: reasonCode ? `Disputed: ${reasonCode}` : "Disputed by user",
-      createdAt: now,
-    });
+  //   // 5) Create order event
+  //   await dbClient.insert(schema.orderEvent).values({
+  //     id: uuidv4(),
+  //     orderId,
+  //     actorId,
+  //     type: "DISPUTED",
+  //     message: reasonCode ? `Disputed: ${reasonCode}` : "Disputed by user",
+  //     createdAt: now,
+  //   });
 
-    return { ok: true, buyerId: order.buyerId, sellerId: order.sellerId };
-  }
+  //   return { ok: true, buyerId: order.buyerId, sellerId: order.sellerId };
+  // }
 
   static async expireIfDue({
     orderId,

@@ -259,51 +259,51 @@ export const OrdersController = new Elysia({
   )
 
   // // ⬇️ เพิ่ม Dispute (ออปชันเผื่อคุณยังไม่มี)
-  // .post(
-  //   "/:id/dispute",
-  //   async ({ params, payload, body, set }) => {
-  //     const actorId = payload.id;
-  //     const orderId = params.id;
-  //     const reasonCode = (body?.reason_code as string) || "OTHER";
+  .post(
+    "/:id/dispute",
+    async ({ params, payload, body, set }) => {
+      const actorId = payload.id;
+      const orderId = params.id;
+      const reasonCode = (body?.reason_code as string) || "OTHER";
 
-  //     const ok = await ordersService.raiseDispute({
-  //       orderId,
-  //       actorId,
-  //       reasonCode,
-  //     });
-  //     if (!ok.ok) {
-  //       set.status = ok.status ?? 400;
-  //       return { success: false, error: ok.error };
-  //     }
+      const ok = await ordersService.raiseDispute({
+        orderId,
+        actorId,
+        reasonCode,
+      });
+      if (!ok.ok) {
+        set.status = ok.status ?? 400;
+        return { success: false, error: ok.error };
+      }
 
-  //     const { buyerId, sellerId } = ok as unknown as {
-  //       buyerId: string;
-  //       sellerId: string;
-  //     };
+      const { buyerId, sellerId } = ok as unknown as {
+        buyerId: string;
+        sellerId: string;
+      };
 
-  //     sseHub.publish(`user:${buyerId}`, "order.update", {
-  //       orderId,
-  //       action: "disputed",
-  //       side: "buyer",
-  //     });
-  //     sseHub.publish(`user:${sellerId}`, "order.update", {
-  //       orderId,
-  //       action: "disputed",
-  //       side: "seller",
-  //     });
-  //     sseHub.publish(`order:${orderId}`, "order.update", {
-  //       orderId,
-  //       action: "disputed",
-  //     });
+      sseHub.publish(`user:${buyerId}`, "order.update", {
+        orderId,
+        action: "disputed",
+        side: "buyer",
+      });
+      sseHub.publish(`user:${sellerId}`, "order.update", {
+        orderId,
+        action: "disputed",
+        side: "seller",
+      });
+      sseHub.publish(`order:${orderId}`, "order.update", {
+        orderId,
+        action: "disputed",
+      });
 
-  //     return { success: true, data: { status: "DISPUTED", tradeDeadlineAt } };
-  //   },
-  //   {
-  //     auth: true,
-  //     params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
-  //     body: t.Object({ reason_code: t.Optional(t.String()) }),
-  //   }
-  // )
+      return { success: true };
+    },
+    {
+      auth: true,
+      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+      body: t.Object({ reason_code: t.Optional(t.String()) }),
+    }
+  )
   .post(
     "/:id/dispute/resolve",
     async ({ params, payload, body, set }) => {
