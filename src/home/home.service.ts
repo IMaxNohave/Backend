@@ -8,6 +8,7 @@ import {
   cancelAllExpireJobs,
 } from "../jobs/order-expire.queue";
 import { HOLD_WINDOW_MS } from "../order/constants";
+import { notify } from "../lib/notify";
 
 /** --------- Helpers --------- **/
 type Filters = {
@@ -284,6 +285,24 @@ export abstract class homeService {
           .update(schema.item)
           .set({ status: 2, updatedAt: new Date() })
           .where(eq(schema.item.id, itemId));
+
+        // await notify({
+        //   toUserId: buyerId,
+        //   type: "ORDER",
+        //   title: "Order updated",
+        //   body: "Seller accepted and trade started",
+        //   orderId: orderId,
+        //   data: { status: "IN_TRADE" },
+        // });
+        if (it.sellerId)
+          await notify({
+            toUserId: it.sellerId,
+            type: "ORDER",
+            title: "Order updated",
+            body: "Trade started",
+            orderId: orderId,
+            data: { status: "IN_TRADE" },
+          });
 
         return { ok: true, orderId, deadline };
       } catch (e) {

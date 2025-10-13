@@ -97,6 +97,32 @@ export const item = mysqlTable("item", {
   expiresAt: timestamp("expires_at"),
 });
 
+export const notification = mysqlTable("notification", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  userId: varchar("user_id", { length: 36 })
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+
+  // หมวดแจ้งเตือน
+  type: varchar("type", { length: 32 }).notNull(), // "CHAT" | "ORDER" | "WALLET" | "DISPUTE" | "SYSTEM"
+  title: varchar("title", { length: 255 }),
+  body: text("body"),
+
+  // อ้างอิงออเดอร์/ข้อมูลเพิ่มเติม
+  orderId: varchar("order_id", { length: 36 }).references(() => orders.id, {
+    onDelete: "set null",
+  }),
+  data: json("data"), // {orderId, itemId, ...}
+
+  // สถานะอ่าน
+  isRead: boolean("is_read").notNull().default(false),
+  readAt: timestamp("read_at", { fsp: 3 }),
+
+  // housekeeping
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
 export const orders = mysqlTable("orders", {
   id: varchar("id", { length: 36 }).primaryKey(),
   itemId: varchar("item_id", { length: 36 })
