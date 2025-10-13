@@ -94,7 +94,7 @@ export const item = mysqlTable("item", {
   status: int("status").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
+  expiresAt: timestamp("expires_at"),
 });
 
 export const orders = mysqlTable("orders", {
