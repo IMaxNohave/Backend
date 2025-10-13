@@ -17,6 +17,7 @@ import { ItemsController } from "item/items.controller";
 import { OrdersController } from "order/orders.controller";
 import { AdminController } from "admin/admin.controller";
 import { WithdrawController } from "withdraw/withdraw.controller";
+import { EvidenceController } from "evidence/evidence.controller";
 import { sseHub } from "./lib/sse";
 import { sseRoutes } from "./routes/sse";
 import { OrdersChatController } from "order/orders.chat.controller";
@@ -51,6 +52,7 @@ const app = new Elysia()
   .use(uploadR2)
   .use(ItemsController)
   .use(OrdersController)
+  .use(EvidenceController)
   .use(AdminController)
   .use(WithdrawController)
   // i jao nay tum yang mai dai edit
