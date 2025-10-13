@@ -40,3 +40,17 @@ yarn-error.log*
 **/*.log
 package-lock.json
 **/*.bun
+
+# --- Backend (Node/TS) ---
+/Backend/node_modules
+/Backend/dist
+/Backend/build
+/Backend/coverage
+/Backend/*.tsbuildinfo
+
+# --- Redis persistence & logs (ห้าม commit) ---
+Backend/logs/redis/
+**/logs/redis/
+**/*.rdb
+**/*.aof
+**/*.aof.manifest
