@@ -42,6 +42,7 @@ function mapItemRow(r: {
   price: number;
   status: number;
   seller_name: string | null;
+  sellerId: string | null;
   category_id: string | null;
   category_name: string | null;
   category_detail: string | null;
@@ -51,6 +52,7 @@ function mapItemRow(r: {
     id: r.id,
     name: r.name,
     seller_name: r.seller_name,
+    sellerId: r.sellerId,
     detail: r.detail,
     category: {
       id: r.category_id,
@@ -94,6 +96,7 @@ export abstract class homeService {
         price: priceNumber,
         status: schema.item.status,
         seller_name: schema.user.name,
+        sellerId: schema.item.sellerId,
         category_id: schema.item.categoryId,
         category_name: schema.category.name,
         category_detail: schema.category.detail,
@@ -349,6 +352,7 @@ export abstract class homeService {
         price: priceNumber,
         status: schema.item.status,
         seller_name: schema.user.name,
+        sellerId: schema.item.sellerId,
         category_id: schema.item.categoryId,
         category_name: schema.category.name,
         category_detail: schema.category.detail,
