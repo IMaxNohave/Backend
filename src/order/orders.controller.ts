@@ -214,3 +214,93 @@ export const OrdersController = new Elysia({
     },
     { auth: true }
   );
+// // ⬇️ เพิ่ม Cancel
+// .post(
+//   "/:id/cancel",
+//   async ({ params, payload, set }) => {
+//     const actorId = payload.id;
+//     const orderId = params.id;
+
+//     // ให้ service ตรวจสิทธิ์ + ตัดสินใจเรื่องคืนเงิน/คืน item/อัปเดตสถานะ + ยกเลิกคิว BullMQ
+//     const ok = await ordersService.cancel({ orderId, actorId });
+//     if (!ok.ok) {
+//       set.status = ok.status ?? 400;
+//       return { success: false, error: ok.error };
+//     }
+
+//     // service ควรคืน buyerId/sellerId กลับมา เพื่อยิง SSE ให้ครบสองฝั่ง
+//     const { buyerId, sellerId } = ok as unknown as {
+//       buyerId: string;
+//       sellerId: string;
+//     };
+
+//     // แจ้งทั้ง per-user และ per-order channel
+//     sseHub.publish(`user:${buyerId}`, "order.update", {
+//       orderId,
+//       action: "cancelled",
+//       side: "buyer",
+//     });
+//     sseHub.publish(`user:${sellerId}`, "order.update", {
+//       orderId,
+//       action: "cancelled",
+//       side: "seller",
+//     });
+//     sseHub.publish(`order:${orderId}`, "order.update", {
+//       orderId,
+//       action: "cancelled",
+//     });
+
+//     return { success: true };
+//   },
+//   {
+//     auth: true,
+//     params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+//   }
+// )
+
+// // ⬇️ เพิ่ม Dispute (ออปชันเผื่อคุณยังไม่มี)
+// .post(
+//   "/:id/dispute",
+//   async ({ params, payload, body, set }) => {
+//     const actorId = payload.id;
+//     const orderId = params.id;
+//     const reasonCode = (body?.reason_code as string) || "OTHER";
+
+//     const ok = await ordersService.raiseDispute({
+//       orderId,
+//       actorId,
+//       reasonCode,
+//     });
+//     if (!ok.ok) {
+//       set.status = ok.status ?? 400;
+//       return { success: false, error: ok.error };
+//     }
+
+//     const { buyerId, sellerId } = ok as unknown as {
+//       buyerId: string;
+//       sellerId: string;
+//     };
+
+//     sseHub.publish(`user:${buyerId}`, "order.update", {
+//       orderId,
+//       action: "disputed",
+//       side: "buyer",
+//     });
+//     sseHub.publish(`user:${sellerId}`, "order.update", {
+//       orderId,
+//       action: "disputed",
+//       side: "seller",
+//     });
+//     sseHub.publish(`order:${orderId}`, "order.update", {
+//       orderId,
+//       action: "disputed",
+//     });
+
+//     return { success: true };
+//   },
+//   {
+//     auth: true,
+//     params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+//     body: t.Object({ reason_code: t.Optional(t.String()) }),
+//   }
+// );

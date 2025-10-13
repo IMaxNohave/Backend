@@ -19,6 +19,12 @@ import { AdminController } from "admin/admin.controller";
 import { sseHub } from "./lib/sse";
 import { sseRoutes } from "./routes/sse";
 import { OrdersChatController } from "order/orders.chat.controller";
+import { startOrderExpireWorker } from "jobs/order-expire.queue";
+
+if (process.env.ENABLE_JOBS === "1") {
+  startOrderExpireWorker();
+}
+
 const app = new Elysia()
   .mount(auth.handler)
   .use(cors())

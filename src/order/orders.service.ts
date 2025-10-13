@@ -4,6 +4,11 @@ import * as schema from "../db/schema";
 import { and, eq, or, desc, sql, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core"; // <<< สำคัญ!
 import { v4 as uuidv4 } from "uuid";
+import {
+  scheduleTradeExpire,
+  cancelAllExpireJobs, // หรือมีฟังก์ชันแยก cancelHoldExpire()
+} from "../jobs/order-expire.queue";
+import { TRADE_WINDOW_MS } from "./constants";
 
 // ทำ alias ให้ตาราง user สองบทบาท
 const sellerUser = alias(schema.user, "seller");
@@ -188,9 +193,10 @@ export abstract class ordersService {
 
     if (!rows.length) return null;
     const row = rows[0];
-    const canView = row.order_status === "ESCROW_HELD" ? false : true; // pending = ESCROW_HELD → ยังห้ามดูรายละเอียด
-    if (canView) return row;
-    return null;
+    return row;
+    // const canView = row.order_status === "ESCROW_HELD" ? false : true; // pending = ESCROW_HELD → ยังห้ามดูรายละเอียด
+    // if (canView) return row;
+    // return null;
   }
 
   static async sellerAccept({
@@ -202,9 +208,7 @@ export abstract class ordersService {
   }) {
     const TRADE_WINDOW_MIN = 120;
     const now = new Date();
-    const tradeDeadline = new Date(
-      now.getTime() + TRADE_WINDOW_MIN * 60 * 1000
-    );
+    const tradeDeadline = new Date(Date.now() + TRADE_WINDOW_MS);
 
     return dbClient.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
@@ -244,6 +248,10 @@ export abstract class ordersService {
           createdAt: now,
         },
       ]);
+
+      // ภายใน sellerAccept หลัง update db สำเร็จ
+      await cancelAllExpireJobs(orderId); // กัน double-fire
+      await scheduleTradeExpire(orderId, tradeDeadline); // ตั้ง trade window ใหม่
 
       // ✅ ส่ง buyerId กลับไปด้วย เพื่อให้ layer ข้างบน publish ได้
       return {
@@ -303,6 +311,7 @@ export abstract class ordersService {
           sellerId: o.sellerId,
           total: o.total,
         });
+        await cancelAllExpireJobs(orderId);
       }
 
       return { ok: true };
@@ -357,9 +366,134 @@ export abstract class ordersService {
           sellerId: o.sellerId,
           total: o.total,
         });
+        await cancelAllExpireJobs(orderId);
       }
 
       return { ok: true };
+    });
+  }
+
+  static async expireIfDue({
+    orderId,
+    reason, // "SELLER_TIMEOUT" | "TRADE_TIMEOUT"
+  }: {
+    orderId: string;
+    reason: "SELLER_TIMEOUT" | "TRADE_TIMEOUT";
+  }): Promise<{ changed: boolean; buyerId?: string; sellerId?: string }> {
+    const now = new Date();
+
+    return dbClient.transaction(async (tx) => {
+      const o = await tx.query.orders.findFirst({
+        where: eq(schema.orders.id, orderId),
+      });
+      if (!o) return { changed: false };
+
+      // ถ้าไปสถานะปลายทางแล้ว ก็ไม่ทำอะไร
+      if (
+        ["COMPLETED", "CANCELLED", "EXPIRED", "DISPUTED"].includes(o.status)
+      ) {
+        return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
+      }
+
+      // ตรวจจริง ๆ ว่าหมดเวลาหรือยัง (กัน job มาก่อนเวลา/เลื่อนเวลา)
+      const holdDue =
+        o.status === "ESCROW_HELD" &&
+        o.deadlineAt &&
+        new Date(o.deadlineAt).getTime() <= now.getTime();
+
+      const tradeDue =
+        (o.status === "IN_TRADE" || o.status === "AWAIT_CONFIRM") &&
+        o.tradeDeadlineAt &&
+        new Date(o.tradeDeadlineAt).getTime() <= now.getTime();
+
+      if (!holdDue && !tradeDue) {
+        return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
+      }
+
+      // --- คืนเงิน (idempotent): ถ้าเคย RELEASE(5) หรือ REFUND(6) แล้ว ไม่ทำซ้ำ ---
+      // ถ้าเคยปล่อยไปขายแล้ว (release 5) แปลว่า deal จบแล้ว — ไม่ควรมา expire ได้
+      const existedRelease = await tx.query.walletTx.findFirst({
+        where: and(
+          eq(schema.walletTx.orderId, o.id),
+          eq(schema.walletTx.action, "5") // RELEASE to seller
+        ),
+        columns: { id: true },
+      });
+      if (existedRelease) {
+        // ป้องกันกรณี race แปลก ๆ: ถือว่าเปลี่ยนสถานะเป็น COMPLETED ไปแล้ว
+        await tx
+          .update(schema.orders)
+          .set({ status: "COMPLETED", updatedAt: now })
+          .where(eq(schema.orders.id, o.id));
+        return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
+      }
+
+      const existedRefund = await tx.query.walletTx.findFirst({
+        where: and(
+          eq(schema.walletTx.orderId, o.id),
+          eq(schema.walletTx.action, "6") // REFUND back to buyer
+        ),
+        columns: { id: true },
+      });
+
+      // ถ้ายังไม่เคยคืน → โยกเงิน held -> balance ให้ buyer
+      if (!existedRefund) {
+        const amountStr =
+          typeof o.total === "string" ? o.total : Number(o.total).toFixed(2);
+
+        await tx
+          .update(schema.wallet)
+          .set({
+            // held - total, balance + total
+            held: sql`held - ${amountStr}`,
+            balance: sql`balance + ${amountStr}`,
+            updatedAt: now,
+          })
+          .where(eq(schema.wallet.userId, o.buyerId));
+
+        await tx.insert(schema.walletTx).values({
+          id: uuidv4(),
+          userId: o.buyerId,
+          orderId: o.id,
+          action: "6", // REFUND (นิยามรหัสไว้ให้ชัด)
+          amount: amountStr,
+          createdAt: now,
+        });
+      }
+
+      // อัปเดตสถานะออเดอร์ → EXPIRED
+      await tx
+        .update(schema.orders)
+        .set({
+          status: "EXPIRED",
+          updatedAt: now,
+          // cancelledAt: now, // ถ้าต้องการบันทึกเวลาหยุดงานร่วมด้วย
+        })
+        .where(eq(schema.orders.id, o.id));
+
+      // เปิดขายสินค้าอีกครั้ง (แล้วแต่นโยบาย: ใช้ status=1 "พร้อมขาย" + isActive=1)
+      await tx
+        .update(schema.item)
+        .set({ status: 1, isActive: true, updatedAt: now })
+        .where(eq(schema.item.id, o.itemId));
+
+      // Events
+      await tx.insert(schema.orderEvent).values({
+        id: uuidv4(),
+        orderId: o.id,
+        actorId: null,
+        type: "EXPIRED",
+        message:
+          reason === "SELLER_TIMEOUT"
+            ? "Expired: seller did not accept in time"
+            : "Expired: trade deadline passed",
+        createdAt: now,
+      });
+
+      // กันซ้ำ job อื่น
+      await cancelAllExpireJobs(o.id);
+
+      return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
     });
   }
 }

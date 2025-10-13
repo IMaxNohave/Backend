@@ -2,6 +2,12 @@ import { dbClient } from "@db/client";
 import * as schema from "../db/schema";
 import { and, eq, like, sql, asc } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import {
+  scheduleHoldExpire,
+  scheduleTradeExpire,
+  cancelAllExpireJobs,
+} from "../jobs/order-expire.queue";
+import { HOLD_WINDOW_MS } from "../order/constants";
 
 /** --------- Helpers --------- **/
 type Filters = {
@@ -148,6 +154,7 @@ export abstract class homeService {
   }): Promise<{
     ok: boolean;
     orderId?: string;
+    deadline?: Date;
     error?: string;
     status?: number;
   }> {
@@ -193,8 +200,7 @@ export abstract class homeService {
           return { ok: false, error: "Insufficient balance", status: 402 };
 
         // 4) สร้างคำสั่งซื้อ (ตั้งเป็น ESCROW_HELD)
-        const deadline = new Date();
-        deadline.setDate(deadline.getDate() + 7);
+        const deadline = new Date(Date.now() + HOLD_WINDOW_MS);
 
         await tx.insert(schema.orders).values({
           id: orderId,
@@ -270,7 +276,7 @@ export abstract class homeService {
           .set({ status: 2, updatedAt: new Date() })
           .where(eq(schema.item.id, itemId));
 
-        return { ok: true, orderId };
+        return { ok: true, orderId, deadline };
       } catch (e) {
         console.error("Transaction error:", e);
         return { ok: false, error: "Transaction error", status: 500 };
