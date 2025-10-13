@@ -1,6 +1,11 @@
 import Elysia, { t } from "elysia";
 import { betterAuth } from "lib/auth-macro";
 import { homeService } from "./home.service";
+import {
+  scheduleHoldExpire,
+  scheduleTradeExpire,
+  cancelAllExpireJobs,
+} from "../jobs/order-expire.queue";
 
 export const HomeController = new Elysia({
   name: "home.controller",
@@ -103,6 +108,14 @@ export const HomeController = new Elysia({
           error: result.error ?? "Cannot buy",
           data: null,
         };
+      }
+      if (result.orderId && result.deadline) {
+        console.log(
+          "Scheduling hold expire for order:",
+          result.orderId,
+          result.deadline
+        );
+        await scheduleHoldExpire(result.orderId, result.deadline);
       }
       return {
         success: true,

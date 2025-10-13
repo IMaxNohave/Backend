@@ -57,6 +57,15 @@ services:
             "-c",
             'bunx drizzle-kit push | awk ''{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }'' | tee -a /app/logs/migration.log',
           ]
+  redis:
+    image: redis:7-alpine
+    container_name: redis/redis-stack:latest
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
 
 volumes:
   IMaxNohave-data: # Check by using `docker volume ls` command
