@@ -16,6 +16,7 @@ import { HomeController } from "home/home.controller";
 import { ItemsController } from "item/items.controller";
 import { OrdersController } from "order/orders.controller";
 import { AdminController } from "admin/admin.controller";
+import { WithdrawController } from "withdraw/withdraw.controller";
 import { sseHub } from "./lib/sse";
 import { sseRoutes } from "./routes/sse";
 import { OrdersChatController } from "order/orders.chat.controller";
@@ -49,6 +50,7 @@ const app = new Elysia()
   .use(ItemsController)
   .use(OrdersController)
   .use(AdminController)
+  .use(WithdrawController)
   // i jao nay tum yang mai dai edit
   .use(salesRoutes)
   .use(creditsRoutes)
