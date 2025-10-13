@@ -6,6 +6,22 @@ import * as schema from "../db/schema"; // มี orders, order_message, order_c
 import { sseHub } from "../lib/sse"; // hub ที่คุณทำไว้
 import { betterAuth } from "../lib/auth-macro"; // macro auth เดิม
 import { randomUUID as uuidv4 } from "crypto";
+import { alias } from "drizzle-orm/mysql-core";
+
+const senderUser = alias(schema.user, "sender");
+
+function computeRole(
+  senderId: string | null,
+  senderType: number | null | undefined,
+  buyerId: string,
+  sellerId: string
+): "buyer" | "seller" | "admin" {
+  if (!senderId) return "admin";
+  if (senderType === 2) return "admin";
+  if (senderId === buyerId) return "buyer";
+  if (senderId === sellerId) return "seller";
+  return "admin";
+}
 
 /** ————— Helpers ————— **/
 
@@ -15,16 +31,16 @@ async function ensureCanAccessOrder(opts: {
   userId: string;
   isAdmin: boolean;
 }) {
-  if (opts.isAdmin) return { buyerId: null, sellerId: null };
-
   const row = await dbClient.query.orders.findFirst({
     where: eq(schema.orders.id, opts.orderId),
     columns: { buyerId: true, sellerId: true, id: true },
   });
-
   if (!row) throw new Error("NOT_FOUND");
-
-  if (row.buyerId !== opts.userId && row.sellerId !== opts.userId) {
+  if (
+    !opts.isAdmin &&
+    row.buyerId !== opts.userId &&
+    row.sellerId !== opts.userId
+  ) {
     throw new Error("FORBIDDEN");
   }
   return { buyerId: row.buyerId, sellerId: row.sellerId };
@@ -52,12 +68,19 @@ export const OrdersChatController = new Elysia({
     async ({ params, query, payload, set }) => {
       const orderId = params.id;
       const userId = payload.id;
-      const isAdmin =
-        (payload as any)?.role === "admin" ||
-        (payload as any)?.isAdmin === true;
 
+      const u = await dbClient
+        .select({ userType: schema.user.user_type })
+        .from(schema.user)
+        .where(eq(schema.user.id, userId))
+        .limit(1);
+      const isAdmin = u.length > 0 && u[0].userType === 2;
+
+      let buyerId: string, sellerId: string;
       try {
-        await ensureCanAccessOrder({ orderId, userId, isAdmin });
+        const p = await ensureCanAccessOrder({ orderId, userId, isAdmin });
+        buyerId = p.buyerId!;
+        sellerId = p.sellerId!;
       } catch (e: any) {
         set.status = e.message === "NOT_FOUND" ? 404 : 403;
         return { success: false, error: e.message };
@@ -67,17 +90,35 @@ export const OrdersChatController = new Elysia({
       const dir = (query.dir as "next" | "prev" | undefined) ?? "next";
       const cursor = (query.cursor as string | undefined) ?? null;
 
-      let baseWhere = eq(schema.orderMessage.orderId, orderId);
-      let rows;
+      // ❗ baseSelect: ไม่มี .where() ที่นี่
+      const baseSelect = () =>
+        dbClient
+          .select({
+            id: schema.orderMessage.id,
+            orderId: schema.orderMessage.orderId,
+            senderId: schema.orderMessage.senderId,
+            kind: schema.orderMessage.kind,
+            body: schema.orderMessage.body,
+            isDeleted: schema.orderMessage.isDeleted,
+            isHidden: schema.orderMessage.isHidden,
+            createdAt: schema.orderMessage.createdAt,
+            senderName: senderUser.name,
+            senderType: senderUser.user_type,
+          })
+          .from(schema.orderMessage)
+          .leftJoin(
+            senderUser,
+            eq(senderUser.id, schema.orderMessage.senderId)
+          );
+
+      let rows: any[];
 
       if (cursor) {
         const pivot = await getMessageById(cursor);
         if (!pivot || pivot.orderId !== orderId) {
-          // ถ้า cursor ไม่ถูกหรือไม่ใช่ออเดอร์นี้ → เริ่มจากปลายตาม dir
-          rows = await dbClient
-            .select()
-            .from(schema.orderMessage)
-            .where(baseWhere)
+          // เริ่มจากปลายตาม dir
+          rows = await baseSelect()
+            .where(eq(schema.orderMessage.orderId, orderId)) // ← where ครั้งเดียว
             .orderBy(
               dir === "next"
                 ? asc(schema.orderMessage.createdAt)
@@ -85,17 +126,14 @@ export const OrdersChatController = new Elysia({
             )
             .limit(limit);
         } else {
-          // ตัดขอบโดยใช้ createdAt (และ id เป็น tie-break ถ้าต้องการ)
           const cmp = dir === "next" ? gt : lt;
-          rows = await dbClient
-            .select()
-            .from(schema.orderMessage)
+          rows = await baseSelect()
             .where(
               and(
-                baseWhere,
+                eq(schema.orderMessage.orderId, orderId),
                 cmp(schema.orderMessage.createdAt, pivot.createdAt)
               )
-            )
+            ) // ← รวมเงื่อนไขใน where เดียว
             .orderBy(
               dir === "next"
                 ? asc(schema.orderMessage.createdAt)
@@ -104,11 +142,8 @@ export const OrdersChatController = new Elysia({
             .limit(limit);
         }
       } else {
-        // ไม่มี cursor → โหลดจากต้นทาง (dir=next) หรือจากท้าย (dir=prev)
-        rows = await dbClient
-          .select()
-          .from(schema.orderMessage)
-          .where(baseWhere)
+        rows = await baseSelect()
+          .where(eq(schema.orderMessage.orderId, orderId)) // ← where ครั้งเดียว
           .orderBy(
             dir === "next"
               ? asc(schema.orderMessage.createdAt)
@@ -117,17 +152,15 @@ export const OrdersChatController = new Elysia({
           .limit(limit);
       }
 
-      // เรียงกลับให้ “เก่า→ใหม่” คงเส้นคงวา
       if (dir === "prev") rows = rows.reverse();
 
-      // next/prev cursor จากผลลัพธ์ (ถ้าจะทำ “รู้ว่ามีต่อไหม” ต้อง query เพิ่ม 1 รายการไว้เช็ค)
-      const nextCursor = rows.length > 0 ? rows[rows.length - 1].id : null;
-      const prevCursor = rows.length > 0 ? rows[0].id : null;
+      const nextCursor = rows.length ? rows[rows.length - 1].id : null;
+      const prevCursor = rows.length ? rows[0].id : null;
 
       return {
         success: true,
         data: {
-          messages: rows.map((m) => ({
+          messages: rows.map((m: any) => ({
             id: m.id,
             order_id: m.orderId,
             sender_id: m.senderId,
@@ -136,6 +169,8 @@ export const OrdersChatController = new Elysia({
             is_deleted: m.isDeleted,
             is_hidden: m.isHidden,
             created_at: m.createdAt,
+            role: computeRole(m.senderId, m.senderType, buyerId!, sellerId!),
+            user_name: m.senderName ?? (m.senderId ? "Unknown" : "Admin"),
           })),
           next_cursor: nextCursor,
           prev_cursor: prevCursor,
@@ -159,11 +194,16 @@ export const OrdersChatController = new Elysia({
     async ({ params, body, payload, set }) => {
       const orderId = params.id;
       const userId = payload.id;
-      const isAdmin =
-        (payload as any)?.role === "admin" ||
-        (payload as any)?.isAdmin === true;
 
-      // ตรวจสิทธิ์ & หาคู่สนทนา
+      // isAdmin จาก user_type
+      const u = await dbClient
+        .select({ userType: schema.user.user_type })
+        .from(schema.user)
+        .where(eq(schema.user.id, userId))
+        .limit(1);
+      const isAdmin = u.length > 0 && u[0].userType === 2;
+
+      // ตรวจสิทธิ์และได้ buyerId/sellerId มาคิด role
       let buyerId: string | null = null;
       let sellerId: string | null = null;
       try {
@@ -177,12 +217,8 @@ export const OrdersChatController = new Elysia({
 
       const now = new Date();
       const id = uuidv4();
-
-      // kind TEXT|SYSTEM|IMAGE|VIDEO (ตอนนี้รองรับ TEXT กับ SYSTEM ก่อน)
       const kind = body.kind ?? "TEXT";
-      const content = String(body.body ?? "").slice(0, 500); // limit ขนาดเบื้องต้น
-
-      // SYSTEM message สามารถตั้ง senderId = null
+      const content = String(body.body ?? "").slice(0, 500);
       const senderId = kind === "SYSTEM" ? null : userId;
 
       await dbClient.insert(schema.orderMessage).values({
@@ -197,6 +233,21 @@ export const OrdersChatController = new Elysia({
         updatedAt: now,
       });
 
+      // 🔎 ดึงชื่อ/ประเภทผู้ส่ง (ถ้ามี senderId)
+      let senderName = "Admin";
+      let senderType = 2;
+      if (senderId) {
+        const s = await dbClient
+          .select({ name: schema.user.name, userType: schema.user.user_type })
+          .from(schema.user)
+          .where(eq(schema.user.id, senderId))
+          .limit(1);
+        senderName = s[0]?.name ?? "Unknown";
+        senderType = s[0]?.userType ?? 1;
+      }
+
+      const role = computeRole(senderId, senderType, buyerId!, sellerId!);
+
       const message = {
         id,
         order_id: orderId,
@@ -206,16 +257,15 @@ export const OrdersChatController = new Elysia({
         is_deleted: false,
         is_hidden: false,
         created_at: now.toISOString(),
+        role, // 👈 เพิ่ม
+        user_name: senderName, // 👈 เพิ่ม
       };
 
-      // 🔔 publish SSE: ห้องออเดอร์ (แสดงข้อความ)
       sseHub.publish(`order:${orderId}`, "order.message.new", {
         v: 1,
         orderId,
         message,
       });
-
-      // (ออปชัน) publish ห้องผู้ใช้ เพื่อกระดิก badge ลิสต์
       if (buyerId)
         sseHub.publish(`user:${buyerId}`, "order.message.new", { orderId });
       if (sellerId)
@@ -246,9 +296,13 @@ export const OrdersChatController = new Elysia({
     async ({ params, body, payload, set }) => {
       const orderId = params.id;
       const userId = payload.id;
-      const isAdmin =
-        (payload as any)?.role === "admin" ||
-        (payload as any)?.isAdmin === true;
+      const u = await dbClient
+        .select({ userType: schema.user.user_type }) // <-- ต้องมีคอลัมน์นี้ใน schema
+        .from(schema.user)
+        .where(eq(schema.user.id, userId))
+        .limit(1);
+
+      const isAdmin = u.length > 0 && u[0].userType === 2;
 
       try {
         await ensureCanAccessOrder({ orderId, userId, isAdmin });
