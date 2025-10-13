@@ -1,7 +1,7 @@
 name: IMaxNohave # You can also change this to another name to avoid warning with existing group.
 services:
   database:
-    image: mysql:8.4 # หรือ mysql:8.0 ถ้าต้องการ stable
+    image: mysql:8.0 # stable version
     container_name: IMaxNohave-db
     restart: always
     ports:
