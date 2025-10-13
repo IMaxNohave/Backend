@@ -7,6 +7,7 @@ import { sseHub } from "../lib/sse"; // hub ที่คุณทำไว้
 import { betterAuth } from "../lib/auth-macro"; // macro auth เดิม
 import { randomUUID as uuidv4 } from "crypto";
 import { alias } from "drizzle-orm/mysql-core";
+import { notify } from "../lib/notify"; // ฟังก์ชันแจ้งเตือน
 
 const senderUser = alias(schema.user, "sender");
 
@@ -266,10 +267,28 @@ export const OrdersChatController = new Elysia({
         orderId,
         message,
       });
-      if (buyerId)
-        sseHub.publish(`user:${buyerId}`, "order.message.new", { orderId });
-      if (sellerId)
-        sseHub.publish(`user:${sellerId}`, "order.message.new", { orderId });
+      //   if (buyerId)
+      //     sseHub.publish(`user:${buyerId}`, "order.message.new", { orderId });
+      //   if (sellerId)
+      //     sseHub.publish(`user:${sellerId}`, "order.message.new", { orderId });
+
+      const recipients: string[] = [];
+      if (buyerId && buyerId !== senderId) recipients.push(buyerId);
+      if (sellerId && sellerId !== senderId) recipients.push(sellerId);
+
+      // (ถ้าต้องการให้แอดมินได้แจ้งเตือนทุกห้อง ก็ loop ใส่ adminIds ด้วย)
+
+      for (const uid of recipients) {
+        console.log("Notify to", uid);
+        await notify({
+          toUserId: uid,
+          type: "CHAT",
+          title: "New chat message",
+          body: content.slice(0, 120),
+          orderId,
+          data: { orderId, messageId: id },
+        });
+      }
 
       return { success: true, data: message };
     },
