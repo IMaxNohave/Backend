@@ -176,6 +176,7 @@ export const orderEvent = mysqlTable("order_event", {
 //   buyerConfirmedAt: timestamp("buyer_confirmed_at", { fsp: 3 }),
 // });
 
+// db/schema.ts (เพิ่มคอลัมน์ใน dispute)
 export const dispute = mysqlTable("dispute", {
   id: varchar("id", { length: 36 }).primaryKey(),
   orderId: varchar("order_id", { length: 36 })
@@ -188,14 +189,49 @@ export const dispute = mysqlTable("dispute", {
   bondAmount: decimal("bond_amount", { precision: 12, scale: 2 })
     .notNull()
     .default("0"),
-  status: text("status").notNull().default("OPEN"),
+  status: text("status").notNull().default("OPEN"), // OPEN | RESOLVED | CANCELLED
   autoVerdict: text("auto_verdict"),
+
+  // ⬇️ เพิ่ม field สำหรับผลตัดสิน
+  payoutBuyer: decimal("payout_buyer", { precision: 12, scale: 2 })
+    .notNull()
+    .default("0"),
+  payoutSeller: decimal("payout_seller", { precision: 12, scale: 2 })
+    .notNull()
+    .default("0"),
+  resolutionType: text("resolution_type").notNull().default("MANUAL"), // MANUAL | AUTO
+  resolutionNote: text("resolution_note"),
+
   resolvedBy: varchar("resolved_by", { length: 36 }).references(() => user.id, {
     onDelete: "set null",
   }),
   resolvedAt: timestamp("resolved_at", { fsp: 3 }),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+// db/schema.ts
+export const disputeSettlement = mysqlTable("dispute_settlement", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  orderId: varchar("order_id", { length: 36 })
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  disputeId: varchar("dispute_id", { length: 36 }).references(
+    () => dispute.id,
+    { onDelete: "set null" }
+  ),
+  sellerPct: int("seller_pct").notNull(), // 0..100
+  sellerAmount: decimal("seller_amount", { precision: 12, scale: 2 }).notNull(),
+  buyerAmount: decimal("buyer_amount", { precision: 12, scale: 2 }).notNull(),
+  feeAmount: decimal("fee_amount", { precision: 12, scale: 2 })
+    .notNull()
+    .default("0"),
+  note: text("note"),
+  createdBy: varchar("created_by", { length: 36 }).references(() => user.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const evidence = mysqlTable("evidence", {

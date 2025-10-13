@@ -303,4 +303,69 @@ export const OrdersController = new Elysia({
       params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
       body: t.Object({ reason_code: t.Optional(t.String()) }),
     }
+  )
+  .post(
+    "/:id/dispute/resolve",
+    async ({ params, payload, body, set }) => {
+      const adminId = payload.id;
+      const orderId = params.id;
+
+      const sellerPct = body?.seller_pct as number | undefined;
+      const sellerAmount = body?.seller_amount as string | number | undefined;
+      const note = body?.note as string | undefined;
+
+      const ok = await ordersService.resolveDispute({
+        orderId,
+        adminId,
+        sellerPct,
+        sellerAmount,
+        note,
+      });
+
+      if (!ok.ok) {
+        set.status = ok.status ?? 400;
+        return { success: false, error: ok.error };
+      }
+
+      const { buyerId, sellerId, payoutSeller, refundBuyer, finalStatus } = ok;
+
+      // SSE แจ้งผู้เกี่ยวข้อง
+      sseHub.publish(`user:${buyerId}`, "order.update", {
+        orderId,
+        action: "dispute_resolved",
+        side: "buyer",
+        payoutSeller,
+        refundBuyer,
+        finalStatus,
+      });
+      sseHub.publish(`user:${sellerId}`, "order.update", {
+        orderId,
+        action: "dispute_resolved",
+        side: "seller",
+        payoutSeller,
+        refundBuyer,
+        finalStatus,
+      });
+      sseHub.publish(`order:${orderId}`, "order.update", {
+        orderId,
+        action: "dispute_resolved",
+        payoutSeller,
+        refundBuyer,
+        finalStatus,
+      });
+
+      return {
+        success: true,
+        data: { status: finalStatus, payoutSeller, refundBuyer },
+      };
+    },
+    {
+      auth: true,
+      params: t.Object({ id: t.String({ minLength: 36, maxLength: 36 }) }),
+      body: t.Object({
+        seller_pct: t.Optional(t.Number()), // 0..100
+        seller_amount: t.Optional(t.String()), // ระบุจำนวนแทน %
+        note: t.Optional(t.String()),
+      }),
+    }
   );

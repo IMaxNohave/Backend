@@ -2,54 +2,27 @@
 import { dbClient } from "@db/client";
 import * as schema from "../db/schema";
 import { and, eq, or, desc, sql, isNull } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core"; // <<< สำคัญ!
+import { alias } from "drizzle-orm/mysql-core";
 import { v4 as uuidv4 } from "uuid";
 import {
   scheduleTradeExpire,
-  cancelAllExpireJobs, // หรือมีฟังก์ชันแยก cancelHoldExpire()
+  cancelAllExpireJobs,
 } from "../jobs/order-expire.queue";
 import { TRADE_WINDOW_MS, DISPUTE_EXTENSION_MS } from "./constants";
 
-// ทำ alias ให้ตาราง user สองบทบาท
+// ทำ alias ให้ตาราง user หลายบทบาท
 const sellerUser = alias(schema.user, "seller");
 const buyerUser = alias(schema.user, "buyer");
+const adminUser = alias(schema.user, "admin");
 
-function mapOrderRow(r: any) {
-  return {
-    id: r.order_id,
-    status: r.order_status,
-    createdAt: r.order_created_at,
-    deadlineAt: r.order_deadline_at,
-    tradeDeadlineAt: r.trade_deadline_at,
-    sellerAcceptAt: r.seller_accepted_at,
-    sellerConfirmedAt: r.seller_confirmed_at,
-    buyerConfirmedAt: r.buyer_confirmed_at,
-    cancelledBy: r.cancelled_by ?? null,
-    cancelledAt: r.cancelled_at ?? null,
-    disputedAt: r.disputed_at ?? null,
-
-    quantity: r.order_quantity,
-    price: Number(r.price_at_purchase),
-    total: Number(r.total),
-
-    item: {
-      id: r.item_id,
-      name: r.item_name,
-      image: r.item_image,
-    },
-    seller: {
-      id: r.seller_id,
-      name: r.seller_name,
-    },
-    buyer: {
-      id: r.buyer_id,
-      name: r.buyer_name,
-    },
-    hasNewMessages: false,
-  };
-}
+// ---- helpers ----
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const clamp = (n: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, n));
 
 export abstract class ordersService {
+  /* ------------------------ LISTS ------------------------ */
+
   static async listOrdersForBuyer({
     buyerId,
     limit,
@@ -59,6 +32,7 @@ export abstract class ordersService {
   }) {
     const rows = await dbClient
       .select({
+        // order core
         order_id: schema.orders.id,
         order_status: schema.orders.status,
         order_created_at: schema.orders.createdAt,
@@ -71,23 +45,41 @@ export abstract class ordersService {
         cancelled_at: schema.orders.cancelledAt,
         disputed_at: schema.orders.disputedAt,
 
+        // amounts
         order_quantity: schema.orders.quantity,
         price_at_purchase: schema.orders.priceAtPurchase,
         total: schema.orders.total,
 
+        // item
         item_id: schema.item.id,
         item_name: schema.item.name,
         item_image: schema.item.image,
 
+        // parties
         seller_id: sellerUser.id,
         seller_name: sellerUser.name,
         buyer_id: buyerUser.id,
         buyer_name: buyerUser.name,
+
+        // latest settlement (ถ้ามี)
+        settle_seller_pct: schema.disputeSettlement.sellerPct,
+        settle_seller_amount: schema.disputeSettlement.sellerAmount,
+        settle_buyer_amount: schema.disputeSettlement.buyerAmount,
+        settle_fee_amount: schema.disputeSettlement.feeAmount,
+        settle_note: schema.disputeSettlement.note,
+        settle_resolved_at: schema.dispute.resolvedAt,
+        settle_resolved_by: adminUser.name,
       })
       .from(schema.orders)
       .leftJoin(schema.item, eq(schema.orders.itemId, schema.item.id))
       .leftJoin(sellerUser, eq(schema.orders.sellerId, sellerUser.id))
       .leftJoin(buyerUser, eq(schema.orders.buyerId, buyerUser.id))
+      .leftJoin(schema.dispute, eq(schema.dispute.orderId, schema.orders.id))
+      .leftJoin(
+        schema.disputeSettlement,
+        eq(schema.disputeSettlement.orderId, schema.orders.id)
+      )
+      .leftJoin(adminUser, eq(adminUser.id, schema.dispute.resolvedBy))
       .where(eq(schema.orders.buyerId, buyerId))
       .orderBy(desc(schema.orders.createdAt))
       .limit(limit);
@@ -128,17 +120,33 @@ export abstract class ordersService {
         seller_name: sellerUser.name,
         buyer_id: buyerUser.id,
         buyer_name: buyerUser.name,
+
+        settle_seller_pct: schema.disputeSettlement.sellerPct,
+        settle_seller_amount: schema.disputeSettlement.sellerAmount,
+        settle_buyer_amount: schema.disputeSettlement.buyerAmount,
+        settle_fee_amount: schema.disputeSettlement.feeAmount,
+        settle_note: schema.disputeSettlement.note,
+        settle_resolved_at: schema.dispute.resolvedAt,
+        settle_resolved_by: adminUser.name,
       })
       .from(schema.orders)
       .leftJoin(schema.item, eq(schema.orders.itemId, schema.item.id))
       .leftJoin(sellerUser, eq(schema.orders.sellerId, sellerUser.id))
       .leftJoin(buyerUser, eq(schema.orders.buyerId, buyerUser.id))
+      .leftJoin(schema.dispute, eq(schema.dispute.orderId, schema.orders.id))
+      .leftJoin(
+        schema.disputeSettlement,
+        eq(schema.disputeSettlement.orderId, schema.orders.id)
+      )
+      .leftJoin(adminUser, eq(adminUser.id, schema.dispute.resolvedBy))
       .where(eq(schema.orders.sellerId, sellerId))
       .orderBy(desc(schema.orders.createdAt))
       .limit(limit);
 
     return rows;
   }
+
+  /* ------------------------ DETAIL ------------------------ */
 
   static async getOrderDetail({
     orderId,
@@ -147,16 +155,16 @@ export abstract class ordersService {
     orderId: string;
     userId: string;
   }) {
-    // 1) เช็คบทบาทจากตาราง user
+    // 1) เช็คบทบาท
     const u = await dbClient
-      .select({ userType: schema.user.user_type }) // <-- ต้องมีคอลัมน์นี้ใน schema
+      .select({ userType: schema.user.user_type })
       .from(schema.user)
       .where(eq(schema.user.id, userId))
       .limit(1);
 
     const isAdmin = u.length > 0 && u[0].userType === 2;
 
-    // 2) ฟิลด์ที่ select เหมือนเดิม
+    // 2) select fields (รวม settlement)
     const fields = {
       order_id: schema.orders.id,
       order_status: schema.orders.status,
@@ -182,15 +190,29 @@ export abstract class ordersService {
       seller_name: sellerUser.name,
       buyer_id: buyerUser.id,
       buyer_name: buyerUser.name,
+
+      // settlement
+      settle_seller_pct: schema.disputeSettlement.sellerPct,
+      settle_seller_amount: schema.disputeSettlement.sellerAmount,
+      settle_buyer_amount: schema.disputeSettlement.buyerAmount,
+      settle_fee_amount: schema.disputeSettlement.feeAmount,
+      settle_note: schema.disputeSettlement.note,
+      settle_resolved_at: schema.dispute.resolvedAt,
+      settle_resolved_by: adminUser.name,
     };
 
-    // 3) ถ้าเป็นแอดมิน → ข้ามการบังคับเป็น buyer/seller
     const base = dbClient
       .select(fields)
       .from(schema.orders)
       .leftJoin(schema.item, eq(schema.orders.itemId, schema.item.id))
       .leftJoin(sellerUser, eq(schema.orders.sellerId, sellerUser.id))
-      .leftJoin(buyerUser, eq(schema.orders.buyerId, buyerUser.id));
+      .leftJoin(buyerUser, eq(schema.orders.buyerId, buyerUser.id))
+      .leftJoin(schema.dispute, eq(schema.dispute.orderId, schema.orders.id))
+      .leftJoin(
+        schema.disputeSettlement,
+        eq(schema.disputeSettlement.orderId, schema.orders.id)
+      )
+      .leftJoin(adminUser, eq(adminUser.id, schema.dispute.resolvedBy));
 
     const rows = await (isAdmin
       ? base.where(eq(schema.orders.id, orderId)).limit(1)
@@ -207,8 +229,10 @@ export abstract class ordersService {
           .limit(1));
 
     if (!rows.length) return null;
-    return rows[0]; // หรือ mapOrderRow(rows[0]) ถ้า FE ใช้รูปแบบนั้น
+    return rows[0];
   }
+
+  /* ------------------------ STATE CHANGES ------------------------ */
 
   static async sellerAccept({
     orderId,
@@ -217,7 +241,6 @@ export abstract class ordersService {
     orderId: string;
     sellerId: string;
   }) {
-    const TRADE_WINDOW_MIN = 120;
     const now = new Date();
     const tradeDeadline = new Date(Date.now() + TRADE_WINDOW_MS);
 
@@ -260,11 +283,9 @@ export abstract class ordersService {
         },
       ]);
 
-      // ภายใน sellerAccept หลัง update db สำเร็จ
-      await cancelAllExpireJobs(orderId); // กัน double-fire
-      await scheduleTradeExpire(orderId, tradeDeadline); // ตั้ง trade window ใหม่
+      await cancelAllExpireJobs(orderId);
+      await scheduleTradeExpire(orderId, tradeDeadline);
 
-      // ✅ ส่ง buyerId กลับไปด้วย เพื่อให้ layer ข้างบน publish ได้
       return {
         ok: true,
         buyerId: order.buyerId,
@@ -312,6 +333,7 @@ export abstract class ordersService {
         actorId: sellerId,
         type: "SELLER_CONFIRMED",
         message: "Seller confirmed",
+        createdAt: now,
       });
 
       if (o.buyerConfirmedAt) {
@@ -367,6 +389,7 @@ export abstract class ordersService {
         actorId: buyerId,
         type: "BUYER_CONFIRMED",
         message: "Buyer confirmed",
+        createdAt: now,
       });
 
       if (o.sellerConfirmedAt) {
@@ -384,9 +407,11 @@ export abstract class ordersService {
     });
   }
 
+  /* ------------------------ EXPIRE & CANCEL ------------------------ */
+
   static async expireIfDue({
     orderId,
-    reason, // "SELLER_TIMEOUT" | "TRADE_TIMEOUT"
+    reason,
   }: {
     orderId: string;
     reason: "SELLER_TIMEOUT" | "TRADE_TIMEOUT";
@@ -399,14 +424,12 @@ export abstract class ordersService {
       });
       if (!o) return { changed: false };
 
-      // ถ้าไปสถานะปลายทางแล้ว ก็ไม่ทำอะไร
       if (
         ["COMPLETED", "CANCELLED", "EXPIRED", "DISPUTED"].includes(o.status)
       ) {
         return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
-      // ตรวจจริง ๆ ว่าหมดเวลาหรือยัง (กัน job มาก่อนเวลา/เลื่อนเวลา)
       const holdDue =
         o.status === "ESCROW_HELD" &&
         o.deadlineAt &&
@@ -421,17 +444,14 @@ export abstract class ordersService {
         return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
-      // --- คืนเงิน (idempotent): ถ้าเคย RELEASE(5) หรือ REFUND(6) แล้ว ไม่ทำซ้ำ ---
-      // ถ้าเคยปล่อยไปขายแล้ว (release 5) แปลว่า deal จบแล้ว — ไม่ควรมา expire ได้
       const existedRelease = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
-          eq(schema.walletTx.action, "5") // RELEASE to seller
+          eq(schema.walletTx.action, "5")
         ),
         columns: { id: true },
       });
       if (existedRelease) {
-        // ป้องกันกรณี race แปลก ๆ: ถือว่าเปลี่ยนสถานะเป็น COMPLETED ไปแล้ว
         await tx
           .update(schema.orders)
           .set({ status: "COMPLETED", updatedAt: now })
@@ -442,12 +462,11 @@ export abstract class ordersService {
       const existedRefund = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
-          eq(schema.walletTx.action, "6") // REFUND back to buyer
+          eq(schema.walletTx.action, "6")
         ),
         columns: { id: true },
       });
 
-      // ถ้ายังไม่เคยคืน → โยกเงิน held -> balance ให้ buyer
       if (!existedRefund) {
         const amountStr =
           typeof o.total === "string" ? o.total : Number(o.total).toFixed(2);
@@ -455,7 +474,6 @@ export abstract class ordersService {
         await tx
           .update(schema.wallet)
           .set({
-            // held - total, balance + total
             held: sql`held - ${amountStr}`,
             balance: sql`balance + ${amountStr}`,
             updatedAt: now,
@@ -466,29 +484,25 @@ export abstract class ordersService {
           id: uuidv4(),
           userId: o.buyerId,
           orderId: o.id,
-          action: "6", // REFUND (นิยามรหัสไว้ให้ชัด)
+          action: "6",
           amount: amountStr,
           createdAt: now,
         });
       }
 
-      // อัปเดตสถานะออเดอร์ → EXPIRED
       await tx
         .update(schema.orders)
         .set({
           status: "EXPIRED",
           updatedAt: now,
-          // cancelledAt: now, // ถ้าต้องการบันทึกเวลาหยุดงานร่วมด้วย
         })
         .where(eq(schema.orders.id, o.id));
 
-      // เปิดขายสินค้าอีกครั้ง (แล้วแต่นโยบาย: ใช้ status=1 "พร้อมขาย" + isActive=1)
       await tx
         .update(schema.item)
         .set({ status: 1, isActive: true, updatedAt: now })
         .where(eq(schema.item.id, o.itemId));
 
-      // Events
       await tx.insert(schema.orderEvent).values({
         id: uuidv4(),
         orderId: o.id,
@@ -501,7 +515,6 @@ export abstract class ordersService {
         createdAt: now,
       });
 
-      // กันซ้ำ job อื่น
       await cancelAllExpireJobs(o.id);
 
       return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
@@ -526,22 +539,18 @@ export abstract class ordersService {
       });
       if (!o) return { ok: false, status: 404, error: "Order not found" };
 
-      // ตรวจสิทธิ์: ต้องเป็น buyer หรือ seller
       if (o.buyerId !== actorId && o.sellerId !== actorId) {
         return { ok: false, status: 403, error: "Forbidden" };
       }
 
-      // สถานะปลายทางแล้ว ยกเลิกไม่ได้
       if (["COMPLETED", "EXPIRED"].includes(o.status)) {
         return { ok: false, status: 409, error: "Order already finalized" };
       }
 
-      // ยกเลิกซ้ำ (idempotent) — ถือว่าสำเร็จ
       if (o.status === "CANCELLED") {
         return { ok: true, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
-      // ถ้าปล่อยเงินไปแล้ว (RELEASE=5) ห้ามยกเลิก
       const existedRelease = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
@@ -553,7 +562,6 @@ export abstract class ordersService {
         return { ok: false, status: 409, error: "Order already released" };
       }
 
-      // คืนเงินให้ buyer ถ้ายังไม่เคย REFUND
       const existedRefund = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
@@ -566,7 +574,6 @@ export abstract class ordersService {
         const amountStr =
           typeof o.total === "string" ? o.total : Number(o.total).toFixed(2);
 
-        // held - total, balance + total
         await tx
           .update(schema.wallet)
           .set({
@@ -580,13 +587,12 @@ export abstract class ordersService {
           id: uuidv4(),
           userId: o.buyerId,
           orderId: o.id,
-          action: "6", // REFUND
+          action: "6",
           amount: amountStr,
           createdAt: now,
         });
       }
 
-      // เปลี่ยนสถานะออเดอร์ -> CANCELLED
       await tx
         .update(schema.orders)
         .set({
@@ -597,13 +603,11 @@ export abstract class ordersService {
         })
         .where(eq(schema.orders.id, o.id));
 
-      // เปิดขายสินค้าอีกครั้ง (แล้วแต่นโยบายของคุณ)
       await tx
         .update(schema.item)
         .set({ status: 1, isActive: true, updatedAt: now })
         .where(eq(schema.item.id, o.itemId));
 
-      // เพิ่ม event
       await tx.insert(schema.orderEvent).values({
         id: uuidv4(),
         orderId: o.id,
@@ -613,12 +617,13 @@ export abstract class ordersService {
         createdAt: now,
       });
 
-      // กัน double fire จากคิว
       await cancelAllExpireJobs(o.id);
 
       return { ok: true, buyerId: o.buyerId, sellerId: o.sellerId };
     });
   }
+
+  /* ------------------------ DISPUTE ------------------------ */
 
   static async raiseDispute({
     orderId,
@@ -633,7 +638,7 @@ export abstract class ordersService {
         ok: true;
         buyerId: string;
         sellerId: string;
-        tradeDeadlineAt: string;
+        tradeDeadlineAt: string | null;
       }
     | { ok: false; status?: number; error: string }
   > {
@@ -645,88 +650,314 @@ export abstract class ordersService {
       });
       if (!o) return { ok: false, status: 404, error: "Order not found" };
 
-      // ต้องเป็น buyer หรือ seller เท่านั้น (admin ไปยิงผ่าน admin tool แยกได้)
       if (o.buyerId !== actorId && o.sellerId !== actorId) {
         return { ok: false, status: 403, error: "Forbidden" };
       }
 
-      // อนุญาตให้ Dispute เฉพาะตอนกำลังเทรด/รอยืนยัน
-      if (!["IN_TRADE", "AWAIT_CONFIRM", "DISPUTED"].includes(o.status)) {
-        return { ok: false, status: 409, error: "Invalid state" };
+      const upper = String(o.status || "").toUpperCase();
+      if (!["IN_TRADE", "AWAIT_CONFIRM"].includes(upper)) {
+        if (upper === "DISPUTED") {
+          return {
+            ok: true,
+            buyerId: o.buyerId,
+            sellerId: o.sellerId,
+            tradeDeadlineAt: o.tradeDeadlineAt
+              ? new Date(o.tradeDeadlineAt).toISOString()
+              : null,
+          };
+        }
+        return { ok: false, status: 409, error: "Invalid state to dispute" };
       }
 
-      // ถ้า DISPUTED แล้ว → idempotent: คืนข้อมูลเดิม
-      if (o.status === "DISPUTED") {
-        const baseDeadline = o.tradeDeadlineAt
-          ? new Date(o.tradeDeadlineAt).toISOString()
-          : now.toISOString();
-        return {
-          ok: true,
-          buyerId: o.buyerId,
-          sellerId: o.sellerId,
-          tradeDeadlineAt: baseDeadline,
-        };
-      }
-
-      // มี dispute เปิดอยู่แล้วหรือยัง
-      const existed = await tx.query.dispute.findFirst({
-        where: and(
-          eq(schema.dispute.orderId, orderId),
-          eq(schema.dispute.status, "OPEN")
-        ),
-      });
-      if (!existed) {
-        await tx.insert(schema.dispute).values({
-          id: uuidv4(),
-          orderId,
-          openedBy: actorId,
-          reasonCode,
-          bondAmount: "0",
-          status: "OPEN",
-          createdAt: now,
-          updatedAt: now,
-        });
-      }
-
-      // ขยาย deadline (จาก max(now, tradeDeadlineAtเดิม) + extension)
-      const base = Math.max(
-        now.getTime(),
-        o.tradeDeadlineAt ? new Date(o.tradeDeadlineAt).getTime() : 0
-      );
-      const newTradeDeadline = new Date(base + DISPUTE_EXTENSION_MS);
+      const tdl = new Date(Date.now() + DISPUTE_EXTENSION_MS);
 
       await tx
         .update(schema.orders)
         .set({
           status: "DISPUTED",
           disputedAt: now,
-          tradeDeadlineAt: newTradeDeadline,
+          tradeDeadlineAt: tdl,
           updatedAt: now,
         })
-        .where(eq(schema.orders.id, orderId));
+        .where(eq(schema.orders.id, o.id));
+
+      await tx.insert(schema.dispute).values({
+        id: uuidv4(),
+        orderId: o.id,
+        openedBy: actorId,
+        reasonCode,
+        status: "OPEN",
+        createdAt: now,
+        updatedAt: now,
+      });
 
       await tx.insert(schema.orderEvent).values({
         id: uuidv4(),
-        orderId,
+        orderId: o.id,
         actorId,
         type: "DISPUTED",
-        message: `Dispute opened: ${reasonCode}`,
+        message: `Dispute opened (reason=${reasonCode})`,
         createdAt: now,
       });
-
-      // ยกเลิก job เดิม แล้วตั้งใหม่ตาม deadline ที่ขยาย
-      await cancelAllExpireJobs(orderId);
-      await scheduleTradeExpire(orderId, newTradeDeadline);
 
       return {
         ok: true,
         buyerId: o.buyerId,
         sellerId: o.sellerId,
-        tradeDeadlineAt: newTradeDeadline.toISOString(),
+        tradeDeadlineAt: tdl.toISOString(),
+      };
+    });
+  }
+
+  static async resolveDispute({
+    orderId,
+    adminId,
+    sellerPct,
+    sellerAmount, // ระบุจำนวนแทน pct ได้
+    note,
+  }: {
+    orderId: string;
+    adminId: string;
+    sellerPct?: number;
+    sellerAmount?: string | number;
+    note?: string;
+  }): Promise<
+    | {
+        ok: true;
+        buyerId: string;
+        sellerId: string;
+        payoutSeller: string;
+        refundBuyer: string;
+        finalStatus: "COMPLETED";
+      }
+    | { ok: false; status?: number; error: string }
+  > {
+    const now = new Date();
+
+    return dbClient.transaction(async (tx) => {
+      // admin only
+      const admin = await tx
+        .select({ userType: schema.user.user_type })
+        .from(schema.user)
+        .where(eq(schema.user.id, adminId))
+        .limit(1);
+      if (!(admin.length && admin[0].userType === 2)) {
+        return { ok: false, status: 403, error: "Admin only" };
+      }
+
+      const o = await tx.query.orders.findFirst({
+        where: eq(schema.orders.id, orderId),
+      });
+      if (!o) return { ok: false, status: 404, error: "Order not found" };
+
+      if (String(o.status).toUpperCase() !== "DISPUTED") {
+        return { ok: false, status: 409, error: "Order not in DISPUTED" };
+      }
+
+      // ต้องมี dispute ที่ยัง OPEN
+      const openDispute = await tx.query.dispute.findFirst({
+        where: and(
+          eq(schema.dispute.orderId, o.id),
+          eq(schema.dispute.status, "OPEN")
+        ),
+        columns: { id: true },
+      });
+      if (!openDispute) {
+        return { ok: false, status: 409, error: "No open dispute" };
+      }
+
+      // ป้องกันยิงซ้ำ: ถ้ามี settlement แล้ว ให้ 409
+      const existedSettlement = await tx.query.disputeSettlement.findFirst({
+        where: eq(schema.disputeSettlement.orderId, o.id),
+        columns: { id: true },
+      });
+      if (existedSettlement) {
+        return { ok: false, status: 409, error: "Already resolved" };
+      }
+
+      const totalStr =
+        typeof o.total === "string" ? o.total : Number(o.total).toFixed(2);
+      const total = Number(totalStr);
+
+      // คำนวณสัดส่วน
+      let sellerPart = 0;
+      if (typeof sellerAmount !== "undefined") {
+        sellerPart = clamp(Number(sellerAmount), 0, total);
+        sellerPart = round2(sellerPart);
+      } else if (typeof sellerPct !== "undefined") {
+        const pct = clamp(Number(sellerPct), 0, 100);
+        sellerPart = round2((total * pct) / 100);
+      } else {
+        return {
+          ok: false,
+          status: 400,
+          error: "sellerPct or sellerAmount is required",
+        };
+      }
+      const buyerPart = round2(total - sellerPart);
+
+      const sellerPartStr = sellerPart.toFixed(2);
+      const buyerPartStr = buyerPart.toFixed(2);
+
+      // 1) ลด held ของ buyer รวมทั้งบิล
+      await tx
+        .update(schema.wallet)
+        .set({
+          held: sql`held - ${totalStr}`,
+          updatedAt: now,
+        })
+        .where(eq(schema.wallet.userId, o.buyerId));
+
+      // 2) โอน/คืน + บันทึก tx
+      if (sellerPart > 0) {
+        // release จาก buyer (บันทึกว่าคิดเงินไปเท่าไร)
+        await tx.insert(schema.walletTx).values({
+          id: uuidv4(),
+          userId: o.buyerId,
+          orderId: o.id,
+          action: "5", // RELEASE
+          amount: sellerPartStr,
+          createdAt: now,
+        });
+
+        // จ่ายเข้า seller.balance
+        await tx
+          .update(schema.wallet)
+          .set({ balance: sql`balance + ${sellerPartStr}`, updatedAt: now })
+          .where(eq(schema.wallet.userId, o.sellerId));
+
+        await tx.insert(schema.walletTx).values({
+          id: uuidv4(),
+          userId: o.sellerId,
+          orderId: o.id,
+          action: "7", // PAYOUT
+          amount: sellerPartStr,
+          createdAt: now,
+        });
+      }
+
+      if (buyerPart > 0) {
+        // คืนให้ buyer.balance
+        await tx
+          .update(schema.wallet)
+          .set({ balance: sql`balance + ${buyerPartStr}`, updatedAt: now })
+          .where(eq(schema.wallet.userId, o.buyerId));
+
+        await tx.insert(schema.walletTx).values({
+          id: uuidv4(),
+          userId: o.buyerId,
+          orderId: o.id,
+          action: "6", // REFUND
+          amount: buyerPartStr,
+          createdAt: now,
+        });
+      }
+
+      // 3) ปิด dispute
+      await tx
+        .update(schema.dispute)
+        .set({
+          status: "RESOLVED",
+          resolvedBy: adminId,
+          resolvedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.dispute.orderId, o.id),
+            eq(schema.dispute.status, "OPEN")
+          )
+        );
+
+      // 4) บันทึกผลการชี้ขาด (settlement)
+      await tx.insert(schema.disputeSettlement).values({
+        id: uuidv4(),
+        orderId: o.id,
+        disputeId: openDispute.id,
+        sellerPct:
+          typeof sellerPct === "number"
+            ? Math.round(clamp(sellerPct, 0, 100))
+            : Math.round((sellerPart / total) * 100),
+        sellerAmount: sellerPartStr,
+        buyerAmount: buyerPartStr,
+        feeAmount: "0",
+        note: note ?? null,
+        createdBy: adminId,
+        createdAt: now,
+      });
+
+      // 5) ปรับสถานะออเดอร์ให้จบ
+      await tx
+        .update(schema.orders)
+        .set({ status: "COMPLETED", updatedAt: now })
+        .where(eq(schema.orders.id, o.id));
+
+      // (ตัวเลือก) ปิดสินค้า (ขายสำเร็จ)
+      await tx
+        .update(schema.item)
+        .set({ status: 2, isActive: false, updatedAt: now })
+        .where(eq(schema.item.id, o.itemId));
+
+      // 6) Event + Notification
+      await tx.insert(schema.orderEvent).values({
+        id: uuidv4(),
+        orderId: o.id,
+        actorId: adminId,
+        type: "DISPUTE_RESOLVED",
+        message: `Resolved by admin. Seller ${sellerPartStr}, Buyer ${buyerPartStr}`,
+        createdAt: now,
+      });
+
+      await tx.insert(schema.notification).values([
+        {
+          id: uuidv4(),
+          userId: o.buyerId,
+          type: "DISPUTE",
+          title: "Dispute resolved",
+          body: `Refund ${buyerPartStr}, Seller payout ${sellerPartStr}`,
+          orderId: o.id,
+          data: {
+            orderId: o.id,
+            payoutSeller: sellerPartStr,
+            refundBuyer: buyerPartStr,
+          },
+          isRead: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: uuidv4(),
+          userId: o.sellerId,
+          type: "DISPUTE",
+          title: "Dispute resolved",
+          body: `Payout ${sellerPartStr}, Buyer refund ${buyerPartStr}`,
+          orderId: o.id,
+          data: {
+            orderId: o.id,
+            payoutSeller: sellerPartStr,
+            refundBuyer: buyerPartStr,
+          },
+          isRead: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+
+      await cancelAllExpireJobs(o.id);
+
+      return {
+        ok: true,
+        buyerId: o.buyerId,
+        sellerId: o.sellerId,
+        payoutSeller: sellerPartStr,
+        refundBuyer: buyerPartStr,
+        finalStatus: "COMPLETED",
       };
     });
   }
 }
+
+/* ------------------------ INTERNAL ------------------------ */
 
 async function releaseAndPayout(
   tx: any,
@@ -735,14 +966,16 @@ async function releaseAndPayout(
     itemId: string;
     buyerId: string;
     sellerId: string;
-    total: string | number; // drizzle decimal -> string
+    total: string | number;
   }
 ) {
   const now = new Date();
   const amountStr =
-    typeof order.total === "string" ? order.total : order.total.toFixed(2);
+    typeof order.total === "string"
+      ? order.total
+      : Number(order.total).toFixed(2);
 
-  // 1) Idempotency guard: เคย RELEASE แล้วหรือยัง?
+  // ป้องกันซ้ำ
   const existingRelease = await tx.query.walletTx.findFirst({
     where: and(
       eq(schema.walletTx.orderId, order.id),
@@ -750,11 +983,9 @@ async function releaseAndPayout(
     ),
     columns: { id: true },
   });
-  if (existingRelease) return; // ปล่อยไปเลย กันยิงซ้ำ
+  if (existingRelease) return;
 
-  // (ถ้าอยากล็อก order เพิ่ม เติม SELECT ... FOR UPDATE ตรงจุด Caller)
-
-  // 2) โยกเงิน: buyer.held -= total
+  // ตัด held buyer
   await tx
     .update(schema.wallet)
     .set({
@@ -772,7 +1003,7 @@ async function releaseAndPayout(
     createdAt: now,
   });
 
-  // 3) จ่ายเข้า wallet ผู้ขาย: seller.balance += total
+  // โอนให้ seller
   await tx
     .update(schema.wallet)
     .set({
@@ -785,12 +1016,12 @@ async function releaseAndPayout(
     id: uuidv4(),
     userId: order.sellerId,
     orderId: order.id,
-    action: "7", // TRABSFER (PAYOUT)
+    action: "7", // PAYOUT
     amount: amountStr,
     createdAt: now,
   });
 
-  // 4) ใส่ event
+  // events
   await tx.insert(schema.orderEvent).values([
     {
       id: uuidv4(),
@@ -804,25 +1035,24 @@ async function releaseAndPayout(
       id: uuidv4(),
       orderId: order.id,
       actorId: null,
-      type: "PAYOUT_CREDITED", // หรือ 'PAYOUT_QUEUED' หากไปจ่ายออก batch ทีหลัง
+      type: "PAYOUT_CREDITED",
       message: `Credited ${amountStr} to seller wallet`,
       createdAt: now,
     },
   ]);
 
-  // 5) อัปเดตสถานะ (กันกรณี caller ยังไม่ได้เซ็ต)
+  // อัปเดต order
   await tx
     .update(schema.orders)
     .set({
       status: "COMPLETED",
       updatedAt: now,
-      // escrowReleasedAt: now, // ถ้าเพิ่มคอลัมน์นี้
     })
     .where(eq(schema.orders.id, order.id));
 
-  // (ตัวเลือก) ปิดสินค้าขายแล้ว
+  // ปิดสินค้าขายแล้ว
   await tx
     .update(schema.item)
-    .set({ status: 2, isActive: 0, updatedAt: now }) // แล้วแต่โมเดลของคุณ
-    .where(eq(schema.item.id, order.itemId)); // ถ้าจะต้องใช้ itemId ให้ query มาก่อน (หรือส่งเข้ามาใน order)
+    .set({ status: 2, isActive: false, updatedAt: now })
+    .where(eq(schema.item.id, order.itemId));
 }
