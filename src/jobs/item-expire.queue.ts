@@ -4,6 +4,7 @@ import { bullConnection } from "../lib/redis";
 import { dbClient } from "@db/client";
 import * as schema from "../db/schema";
 import { and, eq, lte } from "drizzle-orm";
+import { sseHub } from "../lib/sse";
 
 type ItemExpireJob = { itemId: string };
 
@@ -52,20 +53,19 @@ export function startItemExpireWorker() {
       const { itemId } = job.data;
       const now = new Date();
 
-      // Idempotent: หมดอายุได้เฉพาะ item ที่ยังขายอยู่จริง ๆ เท่านั้น
       const res = await dbClient
         .update(schema.item)
         .set({
           isActive: false,
-          status: 0, // 0 = expired/hidden (กำหนดตามระบบคุณ)
+          status: 0,
           updatedAt: now,
         })
         .where(
           and(
             eq(schema.item.id, itemId),
             eq(schema.item.isActive, true),
-            eq(schema.item.status, 1), // 1 = AVAILABLE เท่านั้นถึง expire
-            lte(schema.item.expiresAt, now) // ถึงเวลาแล้วจริง ๆ
+            eq(schema.item.status, 1),
+            lte(schema.item.expiresAt, now)
           )
         );
 
