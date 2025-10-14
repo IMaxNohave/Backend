@@ -483,9 +483,25 @@ export abstract class ordersService {
       });
       if (!o) return { changed: false };
 
-      if (
-        ["COMPLETED", "CANCELLED", "EXPIRED", "DISPUTED"].includes(o.status)
-      ) {
+      // --- NEW: ถ้าอยู่สถานะ DISPUTED ให้ใช้ fallback เมื่อถึง tradeDeadlineAt ---
+      if (o.status === "DISPUTED") {
+        const due =
+          o.tradeDeadlineAt &&
+          new Date(o.tradeDeadlineAt).getTime() <= now.getTime();
+
+        if (!due) {
+          // ยังไม่ถึงเวลา → ยังไม่ทำอะไร
+          return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
+        }
+
+        // ถึงเวลาแล้ว → auto-resolve (idempotent)
+        const r = await autoResolveDisputeOnTimeout(tx, o, now);
+        await cancelAllExpireJobs(o.id);
+        return r;
+      }
+
+      // --- ไปสถานะปลายทางแล้ว ไม่ต้องทำอะไร (ยกเว้น DISPUTED จัดการด้านบน) ---
+      if (["COMPLETED", "CANCELLED", "EXPIRED"].includes(o.status)) {
         return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
@@ -503,6 +519,31 @@ export abstract class ordersService {
         return { changed: false, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
+      // ✅ กรณีหมดเวลา trade และ "มีแต่ผู้ขายกดยืนยัน" → ปล่อยเงินให้ผู้ขาย
+      if (tradeDue && o.sellerConfirmedAt && !o.buyerConfirmedAt) {
+        await releaseAndPayout(tx, {
+          id: o.id,
+          itemId: o.itemId,
+          buyerId: o.buyerId,
+          sellerId: o.sellerId,
+          total: o.total,
+        });
+
+        await tx.insert(schema.orderEvent).values({
+          id: uuidv4(),
+          orderId: o.id,
+          actorId: null,
+          type: "EXPIRED_AUTO_PAYOUT",
+          message:
+            "Trade deadline passed with only seller confirmation: released to seller",
+          createdAt: now,
+        });
+
+        await cancelAllExpireJobs(o.id);
+        return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
+      }
+
+      // Idempotency guard: เคย RELEASE แล้วถือว่าเสร็จสิ้นไปแล้ว
       const existedRelease = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
@@ -518,6 +559,7 @@ export abstract class ordersService {
         return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
+      // ✅ DEFAULT: ไม่มีใครยืนยัน หรือ buyer ฝ่ายเดียว → คืนเงินให้ buyer
       const existedRefund = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
@@ -543,7 +585,7 @@ export abstract class ordersService {
           id: uuidv4(),
           userId: o.buyerId,
           orderId: o.id,
-          action: "6",
+          action: "6", // REFUND
           amount: amountStr,
           createdAt: now,
         });
@@ -569,8 +611,8 @@ export abstract class ordersService {
         type: "EXPIRED",
         message:
           reason === "SELLER_TIMEOUT"
-            ? "Expired: seller did not accept in time"
-            : "Expired: trade deadline passed",
+            ? "Expired: seller did not accept in time (refunded to buyer)"
+            : "Expired: trade deadline passed (refunded to buyer)",
         createdAt: now,
       });
 
@@ -598,18 +640,31 @@ export abstract class ordersService {
       });
       if (!o) return { ok: false, status: 404, error: "Order not found" };
 
+      // ต้องเป็น buyer หรือ seller เท่านั้น
       if (o.buyerId !== actorId && o.sellerId !== actorId) {
         return { ok: false, status: 403, error: "Forbidden" };
       }
 
+      // สถานะปลายทางแล้ว
       if (["COMPLETED", "EXPIRED"].includes(o.status)) {
         return { ok: false, status: 409, error: "Order already finalized" };
       }
 
+      // ยกเลิกซ้ำ (idempotent)
       if (o.status === "CANCELLED") {
         return { ok: true, buyerId: o.buyerId, sellerId: o.sellerId };
       }
 
+      // ❗️สำคัญ: ยกเลิกได้เฉพาะก่อนเริ่มเทรดเท่านั้น
+      if (o.status !== "ESCROW_HELD") {
+        return {
+          ok: false,
+          status: 409,
+          error: "Order is already in trade; cancel is not allowed",
+        };
+      }
+
+      // ป้องกันกรณีปล่อยเงินไปแล้ว (เผื่อ race)
       const existedRelease = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
@@ -621,6 +676,7 @@ export abstract class ordersService {
         return { ok: false, status: 409, error: "Order already released" };
       }
 
+      // คืนเงินให้ buyer ถ้ายังไม่เคย REFUND
       const existedRefund = await tx.query.walletTx.findFirst({
         where: and(
           eq(schema.walletTx.orderId, o.id),
@@ -646,12 +702,13 @@ export abstract class ordersService {
           id: uuidv4(),
           userId: o.buyerId,
           orderId: o.id,
-          action: "6",
+          action: "6", // REFUND
           amount: amountStr,
           createdAt: now,
         });
       }
 
+      // เปลี่ยนสถานะ -> CANCELLED และเปิดขาย item กลับ
       await tx
         .update(schema.orders)
         .set({
@@ -1114,4 +1171,196 @@ async function releaseAndPayout(
     .update(schema.item)
     .set({ status: 2, isActive: false, updatedAt: now })
     .where(eq(schema.item.id, order.itemId));
+}
+
+async function autoResolveDisputeOnTimeout(
+  tx: any,
+  o: {
+    id: string;
+    itemId: string;
+    buyerId: string;
+    sellerId: string;
+    total: string | number;
+    sellerConfirmedAt: Date | null;
+    buyerConfirmedAt: Date | null;
+  },
+  now: Date
+): Promise<{ changed: boolean; buyerId: string; sellerId: string }> {
+  // ถ้ามี RELEASE/REFUND ไปแล้ว ให้สรุปผลและปิด dispute ทันที
+  const released = await tx.query.walletTx.findFirst({
+    where: and(
+      eq(schema.walletTx.orderId, o.id),
+      eq(schema.walletTx.action, "5")
+    ),
+    columns: { id: true, amount: true },
+  });
+  const refunded = await tx.query.walletTx.findFirst({
+    where: and(
+      eq(schema.walletTx.orderId, o.id),
+      eq(schema.walletTx.action, "6")
+    ),
+    columns: { id: true, amount: true },
+  });
+
+  const totalStr =
+    typeof o.total === "string" ? o.total : Number(o.total).toFixed(2);
+  const total = Number(totalStr);
+
+  if (released || refunded) {
+    // มีธุรกรรมฝั่งใดฝั่งหนึ่งไปแล้ว → ปิด dispute แบบ AUTO
+    const sellerPart = released ? total : 0;
+    const buyerPart = refunded ? total : 0;
+
+    await tx
+      .update(schema.dispute)
+      .set({
+        status: "RESOLVED",
+        resolvedBy: null,
+        resolvedAt: now,
+        payoutBuyer: buyerPart.toFixed(2),
+        payoutSeller: sellerPart.toFixed(2),
+        resolutionType: "AUTO",
+        autoVerdict: released
+          ? "TIMEOUT_SELLER_CONFIRMED"
+          : "TIMEOUT_BUYER_REFUND",
+        updatedAt: now,
+      })
+      .where(
+        and(eq(schema.dispute.orderId, o.id), eq(schema.dispute.status, "OPEN"))
+      );
+
+    await tx
+      .update(schema.orders)
+      .set({ status: "COMPLETED", updatedAt: now })
+      .where(eq(schema.orders.id, o.id));
+
+    // สินค้า: ถ้าคืนเงิน → เปิดขายอีกครั้ง, ถ้าจ่ายผู้ขาย → ปิดขาย
+    await tx
+      .update(schema.item)
+      .set(
+        released
+          ? { status: 2, isActive: false, updatedAt: now }
+          : { status: 1, isActive: true, updatedAt: now }
+      )
+      .where(eq(schema.item.id, o.itemId));
+
+    await tx.insert(schema.orderEvent).values({
+      id: uuidv4(),
+      orderId: o.id,
+      actorId: null,
+      type: "DISPUTE_AUTO_RESOLVED",
+      message: released
+        ? "Auto-resolved (timeout): payout to seller"
+        : "Auto-resolved (timeout): refund to buyer",
+      createdAt: now,
+    });
+
+    return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
+  }
+
+  // ไม่มีธุรกรรม → คำนวณตามกติกา fallback
+  const giveToSeller = !!o.sellerConfirmedAt && !o.buyerConfirmedAt;
+  const sellerPart = giveToSeller ? total : 0;
+  const buyerPart = giveToSeller ? 0 : total;
+
+  // หัก held เพียงครั้งเดียว
+  await tx
+    .update(schema.wallet)
+    .set({ held: sql`held - ${totalStr}`, updatedAt: now })
+    .where(eq(schema.wallet.userId, o.buyerId));
+
+  if (sellerPart > 0) {
+    const sellerStr = sellerPart.toFixed(2);
+
+    // ใส่ RELEASE ฝั่ง buyer
+    await tx.insert(schema.walletTx).values({
+      id: uuidv4(),
+      userId: o.buyerId,
+      orderId: o.id,
+      action: "5", // RELEASE
+      amount: sellerStr,
+      createdAt: now,
+    });
+
+    // โอนเข้ากระเป๋าผู้ขาย + บันทึก PAYOUT
+    await tx
+      .update(schema.wallet)
+      .set({ balance: sql`balance + ${sellerStr}`, updatedAt: now })
+      .where(eq(schema.wallet.userId, o.sellerId));
+
+    await tx.insert(schema.walletTx).values({
+      id: uuidv4(),
+      userId: o.sellerId,
+      orderId: o.id,
+      action: "7", // PAYOUT
+      amount: sellerStr,
+      createdAt: now,
+    });
+  }
+
+  if (buyerPart > 0) {
+    const buyerStr = buyerPart.toFixed(2);
+
+    await tx
+      .update(schema.wallet)
+      .set({ balance: sql`balance + ${buyerStr}`, updatedAt: now })
+      .where(eq(schema.wallet.userId, o.buyerId));
+
+    await tx.insert(schema.walletTx).values({
+      id: uuidv4(),
+      userId: o.buyerId,
+      orderId: o.id,
+      action: "6", // REFUND
+      amount: buyerStr,
+      createdAt: now,
+    });
+  }
+
+  // ปิด dispute แบบ AUTO
+  await tx
+    .update(schema.dispute)
+    .set({
+      status: "RESOLVED",
+      resolvedBy: null,
+      resolvedAt: now,
+      payoutBuyer: buyerPart.toFixed(2),
+      payoutSeller: sellerPart.toFixed(2),
+      resolutionType: "AUTO",
+      autoVerdict: giveToSeller
+        ? "TIMEOUT_SELLER_CONFIRMED"
+        : "TIMEOUT_BUYER_REFUND",
+      updatedAt: now,
+    })
+    .where(
+      and(eq(schema.dispute.orderId, o.id), eq(schema.dispute.status, "OPEN"))
+    );
+
+  await tx
+    .update(schema.orders)
+    .set({ status: "COMPLETED", updatedAt: now })
+    .where(eq(schema.orders.id, o.id));
+
+  await tx
+    .update(schema.item)
+    .set(
+      giveToSeller
+        ? { status: 2, isActive: false, updatedAt: now } // ขายสำเร็จ
+        : { status: 1, isActive: true, updatedAt: now } // กลับไปขายใหม่
+    )
+    .where(eq(schema.item.id, o.itemId));
+
+  await tx.insert(schema.orderEvent).values({
+    id: uuidv4(),
+    orderId: o.id,
+    actorId: null,
+    type: "DISPUTE_AUTO_RESOLVED",
+    message: giveToSeller
+      ? "Auto-resolved (timeout): payout to seller"
+      : "Auto-resolved (timeout): refund to buyer",
+    createdAt: now,
+  });
+
+  // (ตัวเลือก) ส่ง notification ให้สองฝั่งด้วย
+
+  return { changed: true, buyerId: o.buyerId, sellerId: o.sellerId };
 }
