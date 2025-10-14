@@ -47,6 +47,8 @@ function mapItemRow(r: {
   category_name: string | null;
   category_detail: string | null;
   expires_at: Date | string | null; // ⬅️ เพิ่มบรรทัดนี้ (บาง DB/driver อาจเป็น string)
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
 }) {
   return {
     id: r.id,
@@ -69,6 +71,18 @@ function mapItemRow(r: {
         : typeof r.expires_at === "string"
         ? new Date(r.expires_at).toISOString()
         : r.expires_at.toISOString(),
+    updatedAt:
+      r.updated_at == null
+        ? null
+        : typeof r.updated_at === "string"
+        ? new Date(r.updated_at).toISOString()
+        : r.updated_at.toISOString(),
+    createdAt:
+      r.created_at == null
+        ? null
+        : typeof r.created_at === "string"
+        ? new Date(r.created_at).toISOString()
+        : r.created_at.toISOString(),
   };
 }
 
@@ -101,6 +115,8 @@ export abstract class homeService {
         category_name: schema.category.name,
         category_detail: schema.category.detail,
         expires_at: schema.item.expiresAt,
+        updated_at: schema.item.updatedAt,
+        created_at: schema.item.createdAt,
       })
       .from(schema.item)
       .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
@@ -357,6 +373,8 @@ export abstract class homeService {
         category_name: schema.category.name,
         category_detail: schema.category.detail,
         expires_at: schema.item.expiresAt,
+        updated_at: schema.item.updatedAt,
+        created_at: schema.item.createdAt,
       })
       .from(schema.item)
       .leftJoin(schema.user, eq(schema.item.sellerId, schema.user.id))
