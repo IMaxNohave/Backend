@@ -1,5 +1,5 @@
 .git
 .env
-.env.test
+.env.docker
 node_modules
 .npmrc

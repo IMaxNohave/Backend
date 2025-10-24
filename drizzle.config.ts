@@ -9,5 +9,5 @@ export default defineConfig({
     url: connectionString,
   },
   verbose: true,
-  strict: true,
+  strict: false,
 });

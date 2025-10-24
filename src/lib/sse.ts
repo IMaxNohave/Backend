@@ -12,7 +12,7 @@ class SSEHub {
 
   subscribe(topic: string) {
     const id = randomUUID();
-    // console.log("[SSE] subscribe:", topic, "client:", id);
+    console.log("[SSE] subscribe:", topic, "client:", id);
 
     let iv: any;
     let client: Client | null = null;
@@ -31,7 +31,7 @@ class SSEHub {
         // welcome
         send(`event: ready\r\ndata: ${JSON.stringify({ topic })}\r\n\r\n`);
 
-        // heartbeat
+        // heartbeat for testing sse
         iv = setInterval(() => {
           // ให้เห็นใน BE log ว่ามี client เปิดจริง
           console.log(

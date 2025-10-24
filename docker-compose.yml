@@ -1,7 +1,7 @@
 name: IMaxNohave # You can also change this to another name to avoid warning with existing group.
 services:
   database:
-    image: mysql:8.0 # stable version
+    image: mysql:8.4 # stable version
     container_name: IMaxNohave-db
     restart: always
     ports:
@@ -29,9 +29,29 @@ services:
       retries: 10
     networks:
       - IMaxNohave-net
+  redis:
+    image: redis/redis-stack:latest
+    container_name: IMaxNohave-redis
+    restart: always
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    environment:
+      - REDIS_ARGS=--appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - IMaxNohave-net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   backend:
     depends_on:
       database:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     container_name: IMaxNohave-backend
     restart: always
@@ -43,6 +63,7 @@ services:
     environment:
       - MYSQL_DB=${MYSQL_DB}
       - MYSQL_PORT=${MYSQL_PORT}
+      - REDIS_URL=${REDIS_URL}
       - MYSQL_HOST=${MYSQL_HOST}
       - MYSQL_APP_USER=${MYSQL_APP_USER}
       - MYSQL_APP_PASSWORD=${MYSQL_APP_PASSWORD}
@@ -50,26 +71,18 @@ services:
       - .:/app
       - /app/node_modules
       - ./logs:/app/logs
-    post_start:
-      - command:
-          [
-            "sh",
-            "-c",
-            'bunx drizzle-kit push | awk ''{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }'' | tee -a /app/logs/migration.log',
-          ]
-  redis:
-    image: redis:7-alpine
-    container_name: redis/redis-stack:latest
-    ports:
-      - "6379:6379"
-      - "8001:8001"
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
+    command: >
+      sh -ceu '
+        bunx drizzle-kit push
+        echo "[start] bun run dev"
+        exec bun run dev
+      '
 
 volumes:
   IMaxNohave-data: # Check by using `docker volume ls` command
     name: IMaxNohave-data
+  redis-data:
+    name: IMaxNohave-redis-data
 networks:
   IMaxNohave-net: # Check by using `docker network ls` command
     name: IMaxNohave-net

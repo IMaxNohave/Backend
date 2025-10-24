@@ -7,8 +7,6 @@ import { auth } from "lib/auth";
 import { salesRoutes } from "./sales/sales";
 import { creditsRoutes } from "./credits/credits";
 import { profileRoutes } from "./routes/profile";
-import { loginRoutes } from "./routes/login";
-import { ordersRoutes } from "./routes/orders";
 import { balanceRoutes } from "./routes/balance";
 import { UserController } from "user/user.controller";
 import { uploadR2 } from "upload-r2/upload-r2";
@@ -59,8 +57,6 @@ const app = new Elysia()
   .use(salesRoutes)
   .use(creditsRoutes)
   .use(profileRoutes)
-  .use(loginRoutes)
-  //.use(ordersRoutes)
   .use(balanceRoutes)
   .use(sseRoutes)
   .use(OrdersChatController)
