@@ -78,6 +78,7 @@ Install dependencies:
 
 ```bash
 bun install
+bun run dev
 ```
 
 Start the development server:
