@@ -47,8 +47,15 @@
 
 ## 🚀 Getting Started
 
+Install dependencies:
+
 ```bash
 bun install
+```
+
+Start the development server:
+
+```bash
 bun run dev
 ```
 
