@@ -1,5 +1,5 @@
 import { defineConfig } from "drizzle-kit";
-import { connectionString } from "./src/db/utils"; // 👈 เปลี่ยนเป็น relative
+import { connectionString } from "./src/db/utils";
 
 export default defineConfig({
   dialect: "mysql",

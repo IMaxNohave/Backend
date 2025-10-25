@@ -5,7 +5,7 @@ FROM oven/bun:latest
 WORKDIR /app
 
 # Copy the current directory contents into the container at /app
-COPY package.json bun.lock ./
+COPY package.json bun.lock* ./
 
 RUN bun install
 
