@@ -14,6 +14,7 @@
 | 660612156  | วชิรวิทย์ ไชยมาตย์     |
 
 ## 🖥️ Technology Stack
+<<<<<<< HEAD
 
 <p align="left">
   <a href="https://bun.sh/" target="_blank">
@@ -38,6 +39,8 @@
 
 ### Backend
 
+=======
+>>>>>>> c53dc00 (Restore Backend section in README)
 <p align="left">
   <a href="https://bun.sh/" target="_blank">
     <img src="https://img.shields.io/badge/Runtime-Bun-%23000000?logo=bun&logoColor=white" alt="Bun" />
@@ -58,6 +61,10 @@
     <img src="https://img.shields.io/badge/Container-Docker-%232496ED?logo=docker&logoColor=white" alt="Docker" />
   </a>
 </p>
+
+### Backend
+
+
 
 - **Runtime:** [Bun](https://bun.sh/)
 - **Language:** [TypeScript](https://www.typescriptlang.org/)
