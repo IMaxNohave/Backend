@@ -48,9 +48,8 @@
 ## 🚀 Getting Started
 
 ```bash
-bun create elysia ./elysia-example
-cd elysia-example
 bun install
+bun run dev
 ```
 
 ## 🗄️ Database Initialization
