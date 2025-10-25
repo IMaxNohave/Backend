@@ -38,6 +38,27 @@
 
 ### Backend
 
+<p align="left">
+  <a href="https://bun.sh/" target="_blank">
+    <img src="https://img.shields.io/badge/Runtime-Bun-%23000000?logo=bun&logoColor=white" alt="Bun" />
+  </a>
+  <a href="https://www.typescriptlang.org/" target="_blank">
+    <img src="https://img.shields.io/badge/Language-TypeScript-%233178C6?logo=typescript&logoColor=white" alt="TypeScript" />
+  </a>
+  <a href="https://elysiajs.com/" target="_blank">
+    <img src="https://img.shields.io/badge/Framework-Elysia-%2300A8E8?logo=bun&logoColor=white" alt="Elysia" />
+  </a>
+  <a href="https://www.mysql.com/" target="_blank">
+    <img src="https://img.shields.io/badge/Database-MySQL-%234479A1?logo=mysql&logoColor=white" alt="MySQL" />
+  </a>
+  <a href="https://orm.drizzle.team/" target="_blank">
+    <img src="https://img.shields.io/badge/ORM-Drizzle%20ORM-%23F15B2A?logo=drizzle&logoColor=white" alt="Drizzle ORM" />
+  </a>
+  <a href="https://www.docker.com/" target="_blank">
+    <img src="https://img.shields.io/badge/Container-Docker-%232496ED?logo=docker&logoColor=white" alt="Docker" />
+  </a>
+</p>
+
 - **Runtime:** [Bun](https://bun.sh/)
 - **Language:** [TypeScript](https://www.typescriptlang.org/)
 - **Framework:** [Elysia](https://elysiajs.com/)
